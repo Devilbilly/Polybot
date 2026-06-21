@@ -56,7 +56,8 @@ def monte_carlo_ordering(markets: List[Dict[str, np.ndarray]], cfg: dict,
 
 
 def _sharpe(x: np.ndarray) -> float:
-    return float(x.mean() / x.std() * np.sqrt(len(x))) if len(x) > 1 and x.std() > 0 else 0.0
+    # per-market Sharpe (mean/std); NOT * sqrt(N) (that is the t-statistic, grows with dataset size)
+    return float(x.mean() / x.std()) if len(x) > 1 and x.std() > 0 else 0.0
 
 
 def per_strategy_fractions(markets: List[Dict[str, np.ndarray]],

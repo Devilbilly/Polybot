@@ -98,7 +98,7 @@ class BacktestResult:
     def __str__(self):
         ps = "  ".join(f"{k}:{v:+.0f}%" for k, v in self.per_strategy_roi.items())
         return (f"markets={self.n_markets}  ROI={self.roi_pct:+.1f}%  final=${self.final:.2f}  "
-                f"maxDD={self.max_dd_pct:.1f}%  sharpe={self.sharpe:.2f}  win={self.win_rate_pct:.1f}%\n"
+                f"maxDD={self.max_dd_pct:.1f}%  sharpe/mkt={self.sharpe:.3f}  win={self.win_rate_pct:.1f}%\n"
                 f"  per-strategy: {ps}")
 
 
@@ -123,7 +123,9 @@ def _compound(fractions_per_market: List[Dict[str, float]], cfg: dict,
             killed = True
         prev = tot
     final = sum(banks.values())
-    sharpe = (np.mean(rets) / np.std(rets) * np.sqrt(len(rets))) if len(rets) > 1 and np.std(rets) > 0 else 0.0
+    # PER-MARKET Sharpe (information ratio): mean/std of per-market returns. NOT multiplied by
+    # sqrt(N) -- that would be the t-statistic, which grows with dataset size and isn't a Sharpe.
+    sharpe = (np.mean(rets) / np.std(rets)) if len(rets) > 1 and np.std(rets) > 0 else 0.0
     per_roi = {nm: (banks[nm] / start_banks[nm] - 1) * 100 for nm in names}
     return BacktestResult(
         n_markets=len(fractions_per_market), roi_pct=(final / capital - 1) * 100, final=final,
@@ -147,8 +149,14 @@ def load_markets(source: str) -> List[Dict[str, np.ndarray]]:
 
 def compute_fractions(markets: List[Dict[str, np.ndarray]], cfg: dict,
                       n_jobs: Optional[int] = None) -> List[Dict[str, float]]:
-    """Per-market return fractions (bankroll-independent), in parallel. Order-independent —
-    reused by run_parallel and the Monte-Carlo ordering test."""
+    """Per-market return fractions (computed at REF_CAPITAL), in parallel. Order-independent —
+    reused by run_parallel and the Monte-Carlo ordering test.
+
+    APPROXIMATION: fractions are bankroll-independent ONLY while fills aren't capped — but the
+    book-depth fill cap and the 1-token minimum are ABSOLUTE, not bankroll-scaled. So run_parallel
+    OVERSTATES ROI at capital >> REF_CAPITAL (real bets hit thin-book caps the reference sim
+    doesn't). For capital-dependent / realistic numbers use the stateful PaperTrader (real fill
+    caps) and robustness.capacity_curve(); run_parallel is exact only near REF_CAPITAL."""
     import multiprocessing as mp
     n_jobs = n_jobs or max(1, (os.cpu_count() or 2) - 1)
     payload = [(m, cfg) for m in markets]
