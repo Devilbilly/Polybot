@@ -52,6 +52,22 @@ class TestPaperTrader(unittest.TestCase):
         self.assertIsNone(PaperTrader(CFG).run_market(a))
 
 
+class TestPaperPersistence(unittest.TestCase):
+    def test_session_persisted_to_db(self):
+        import os, tempfile
+        from polybot.database import Database
+        with tempfile.TemporaryDirectory() as d:
+            db = Database(os.path.join(d, "t.db"))
+            pt = PaperTrader(CFG, capital=1000.0, db=db, session_id="run42")
+            for i, m in enumerate([make_market(fav="YES") for _ in range(6)]):
+                pt.run_market(m, market_id=f"mk{i}", ts=i)
+            summary = db.session_summary("run42")
+            self.assertEqual(summary["rounds"], 6)
+            # the persisted final cash matches the live portfolio cash
+            self.assertAlmostEqual(summary["final_cash"], pt.pf.total_cash(), places=6)
+            db.close()
+
+
 class TestPaperTradeFn(unittest.TestCase):
     def test_from_market_list(self):
         rep = paper_trade([make_market(fav="YES") for _ in range(8)], CFG)

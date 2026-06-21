@@ -30,6 +30,25 @@ CREATE TABLE IF NOT EXISTS ticks (
     PRIMARY KEY (market_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_ticks_market ON ticks(market_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT NOT NULL,
+    round_no   INTEGER NOT NULL,
+    market_id  TEXT,
+    winner     TEXT,
+    total_pnl  REAL,
+    total_cash REAL,
+    ts         INTEGER,
+    PRIMARY KEY (session_id, round_no)
+);
+CREATE TABLE IF NOT EXISTS session_strategy (
+    session_id TEXT NOT NULL,
+    round_no   INTEGER NOT NULL,
+    strategy   TEXT NOT NULL,
+    pnl        REAL,
+    cash       REAL,
+    PRIMARY KEY (session_id, round_no, strategy)
+);
 """
 
 L2_COLS = ["bid_p2", "bid_s2", "ask_p2", "ask_s2", "bid_p3", "bid_s3", "ask_p3", "ask_s3"]
@@ -126,6 +145,35 @@ class Database:
     def set_winner(self, market_id, winner):
         self.conn.execute("UPDATE markets SET winner=? WHERE market_id=?", (winner, market_id))
         self.conn.commit()
+
+    # ---------- paper/live session track record ----------
+    def log_round(self, session_id, result, market_id=None, ts=None):
+        """Persist a settled round (a core.RoundResult) so the track record accumulates."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions(session_id,round_no,market_id,winner,total_pnl,total_cash,ts)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (session_id, result.round_no, market_id, result.winner,
+             result.total_pnl, result.total_cash, ts))
+        for strat, d in result.per_strategy.items():
+            self.conn.execute(
+                "INSERT OR REPLACE INTO session_strategy(session_id,round_no,strategy,pnl,cash)"
+                " VALUES(?,?,?,?,?)",
+                (session_id, result.round_no, strat, d["pnl"], d["cash"]))
+        self.conn.commit()
+
+    def session_summary(self, session_id):
+        """Auditable summary of a persisted session: rounds, final cash, win rate, totals."""
+        rows = self.conn.execute(
+            "SELECT round_no,total_pnl,total_cash FROM sessions WHERE session_id=? ORDER BY round_no",
+            (session_id,)).fetchall()
+        if not rows:
+            return None
+        pnls = [r[1] for r in rows]
+        wins = sum(1 for p in pnls if p > 1e-9)
+        traded = sum(1 for p in pnls if abs(p) > 1e-9)
+        return {"session_id": session_id, "rounds": len(rows),
+                "final_cash": rows[-1][2], "total_pnl": sum(pnls),
+                "win_rate_pct": (wins / traded * 100 if traded else 0.0)}
 
     # ---------- reads (used by backtester) ----------
     def market_ids(self) -> List[str]:

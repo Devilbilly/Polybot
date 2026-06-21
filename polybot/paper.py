@@ -38,15 +38,18 @@ class PaperReport:
 
 
 class PaperTrader:
-    """Stateful paper-trading session over a sequence of markets."""
-    def __init__(self, cfg: dict, capital: float = 1000.0):
+    """Stateful paper-trading session over a sequence of markets. Optionally persists each
+    settled round to a Database so the track record accumulates auditably (same path live uses)."""
+    def __init__(self, cfg: dict, capital: float = 1000.0, db=None, session_id: str = "paper"):
         self.cfg = cfg
         self.capital = capital
         self.pf: Portfolio = build_portfolio(cfg, capital)
         self.log: List[RoundResult] = []
+        self.db = db
+        self.session_id = session_id
 
-    def run_market(self, arrays: Dict[str, np.ndarray]) -> Optional[RoundResult]:
-        """Feed one market's ticks, settle at the end, return the round result."""
+    def run_market(self, arrays: Dict[str, np.ndarray], market_id=None, ts=None) -> Optional[RoundResult]:
+        """Feed one market's ticks, settle at the end, return (and optionally persist) the round."""
         self.pf.new_market()
         last = None
         for tick in ticks_from_arrays(arrays):
@@ -56,6 +59,8 @@ class PaperTrader:
             return None
         res = self.pf.settle(arrays["winner"] == "YES")
         self.log.append(res)
+        if self.db is not None:
+            self.db.log_round(self.session_id, res, market_id=market_id, ts=ts)
         return res
 
     def run(self, markets: List[Dict[str, np.ndarray]], verbose: bool = False) -> PaperReport:

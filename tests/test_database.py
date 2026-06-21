@@ -83,6 +83,24 @@ class TestDatabase(unittest.TestCase):
             self.assertEqual(db.load_market("42")["winner"], "NO")
             db.close()
 
+    def test_session_log_and_summary(self):
+        from polybot.core import RoundResult
+        with tempfile.TemporaryDirectory() as d:
+            db = D.Database(os.path.join(d, "t.db"))
+            db.log_round("s1", RoundResult(1, "YES", 50.0, 1050.0, {"a": {"pnl": 50.0, "cash": 1050.0}}), market_id="m1", ts=100)
+            db.log_round("s1", RoundResult(2, "NO", -20.0, 1030.0, {"a": {"pnl": -20.0, "cash": 1030.0}}), market_id="m2", ts=200)
+            db.log_round("s1", RoundResult(3, "YES", 0.0, 1030.0, {"a": {"pnl": 0.0, "cash": 1030.0}}), market_id="m3", ts=300)
+            s = db.session_summary("s1")
+            self.assertEqual(s["rounds"], 3)
+            self.assertAlmostEqual(s["final_cash"], 1030.0)
+            self.assertAlmostEqual(s["total_pnl"], 30.0)
+            self.assertAlmostEqual(s["win_rate_pct"], 50.0)   # 1 win / 2 traded (the 0 doesn't count)
+            self.assertIsNone(db.session_summary("missing"))
+            # per-strategy rows persisted too
+            n = db.conn.execute("SELECT COUNT(*) FROM session_strategy WHERE session_id='s1'").fetchone()[0]
+            self.assertEqual(n, 3)
+            db.close()
+
     def test_upsert_updates(self):
         with tempfile.TemporaryDirectory() as d:
             db = D.Database(os.path.join(d, "t.db"))

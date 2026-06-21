@@ -41,14 +41,18 @@ def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict,
     )
 
 
-async def run(config_path: str = "polybot/portfolio.json"):  # pragma: no cover (needs live network)
+async def run(config_path: str = "polybot/portfolio.json",
+              db_path: str = "polymarket.db"):  # pragma: no cover (needs live network)
     import asyncio, ssl, time, logging
     import aiohttp, websockets
+    from .database import Database
     log = logging.getLogger("polybot.live"); logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     cfg = json.load(open(config_path))
     pf = build_portfolio(cfg)
-    log.info("[LIVE] %d strategies, capital $%.0f", len(pf.strategies), pf.total_cash())
+    db = Database(db_path)
+    session_id = f"live-{int(time.time())}"
+    log.info("[LIVE] %d strategies, capital $%.0f, session %s", len(pf.strategies), pf.total_cash(), session_id)
     ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
 
     async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
@@ -106,6 +110,7 @@ async def run(config_path: str = "polybot/portfolio.json"):  # pragma: no cover 
                             pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); last_bid = wb
                 if last_bid is not None:
                     res = pf.settle(winner_from_last(last_bid) == "YES")
+                    db.log_round(session_id, res, market_id=token, ts=int(time.time()))
                     log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",
                              res.round_no, res.winner, res.total_pnl, res.total_cash)
             except Exception as e:
