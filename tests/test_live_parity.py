@@ -17,14 +17,32 @@ import json
 import unittest
 import numpy as np
 
+import asyncio
 from polybot import backtester as bt
 from polybot.core import Portfolio, Tick, Position
-from polybot.live import live_tick, build_portfolio, window_open_strike
+from polybot.live import (live_tick, build_portfolio, window_open_strike, _trade_one_market)
 from polybot.recorder import winner_from_recent, winner_from_last
 from polybot.database import determine_winner
 from polybot.btc_model import prob_up
 from polybot.strategies import get_strategy
 from tests.helpers import make_market
+
+
+class _FakeDB:
+    """Captures log_round calls so the loop's settlement record is observable in tests."""
+    def __init__(self):
+        self.rounds = []
+    def log_round(self, session_id, res, market_id=None, ts=None):
+        self.rounds.append((session_id, res, market_id, ts))
+
+
+async def _aiter(items, raise_after=False):
+    """Async generator yielding (msg, book, spot, rem) tuples; if raise_after, raises on the final
+    __anext__ AFTER yielding all items — simulating a websocket drop once some ticks have traded."""
+    for it in items:
+        yield it
+    if raise_after:
+        raise ConnectionError("ws dropped")
 
 
 CFG = {
@@ -166,6 +184,85 @@ class TestSpotDegradationGuards(unittest.TestCase):
         orders = s.decide(t, Position(cash=1000))
         self.assertTrue(any(o.kind == "BUY" for o in orders),
                         "confirmation sleeve must trade the favorite when spot is unavailable")
+
+
+def _msg(bid, ask, rem, spot=0.0, etype="price_change"):
+    return ({"event_type": etype, "best_bid": bid, "best_ask": ask},
+            {"bid_p1": bid, "bid_s1": 1e6, "ask_p1": ask, "ask_s1": 1e6}, spot, rem)
+
+
+def _favorite_pf():
+    cfg = {"strategies": [{"id": "fav", "name": "fav_convergence", "weight": 1.0,
+                           "params": {"buy_p": 0.60, "sell_p": 0.97, "time_cutoff": 0.0,
+                                      "stop_p": 0.5, "max_buy": 1, "bullet_pct": 0.05}}],
+           "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": True},
+           "risk": {"kill_switch_dd": 0.25, "min_capital": 50.0}}
+    return build_portfolio(cfg, 1000.0)
+
+
+class TestTradeOneMarketLoop(unittest.TestCase):
+    """Unit tests for the EXTRACTED live per-market loop (run() is just an I/O driver around it).
+    This is the code the iter-43 review found a position-leak bug in; now regression-tested."""
+
+    def _run(self, stream):
+        pf = _favorite_pf(); pf.new_market()
+        db = _FakeDB(); done = set()
+        t = {"v": 1000}
+        coro = _trade_one_market(pf, end_ts=1000, strike=100000.0, msg_stream=stream,
+                                 token="TKN", db=db, session_id="s", done=done,
+                                 time_fn=lambda: t["v"], log=None)
+        return pf, db, done, coro
+
+    def test_normal_completion_settles_and_records(self):
+        # favorite at 0.85 -> buys YES; market resolves YES (median last-5 ~0.95) -> profit booked
+        stream = _aiter([_msg(0.84, 0.85, rem=120), _msg(0.90, 0.91, rem=80),
+                         _msg(0.94, 0.95, rem=40), _msg(0.95, 0.96, rem=10),
+                         _msg(0.95, 0.96, rem=5)])
+        pf, db, done, coro = self._run(stream)
+        res = asyncio.run(coro)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.winner, "YES")
+        self.assertEqual(len(db.rounds), 1)              # settlement recorded exactly once
+        self.assertIn("TKN", done)                        # marked done -> never re-traded
+        self.assertGreater(pf.total_cash(), 0.0)
+
+    def test_midmarket_disconnect_still_settles_no_leak(self):
+        # CRITICAL invariant (iter-43): a disconnect mid-market must STILL settle in finally, so
+        # the open position is realized, recorded, and the token marked done — never leaked.
+        stream = _aiter([_msg(0.84, 0.85, rem=120), _msg(0.92, 0.93, rem=60)], raise_after=True)
+        pf, db, done, coro = self._run(stream)
+        with self.assertRaises(ConnectionError):          # exception propagates for reconnect backoff
+            asyncio.run(coro)
+        self.assertEqual(len(db.rounds), 1, "disconnect must still record a settlement (no leak)")
+        self.assertIn("TKN", done)
+        self.assertIsNotNone(db.rounds[0][1].winner)
+
+    def test_no_ticks_no_settlement(self):
+        # an empty stream (never traded) must NOT settle, NOT record, NOT mark done (-> retried)
+        pf, db, done, coro = self._run(_aiter([]))
+        res = asyncio.run(coro)
+        self.assertIsNone(res)
+        self.assertEqual(db.rounds, [])
+        self.assertNotIn("TKN", done)
+
+    def test_invalid_and_off_type_messages_filtered(self):
+        # wrong event_type and non-positive bid/ask must be skipped (no trade), like the live loop
+        pf, db, done, coro = self._run(_aiter([
+            _msg(0.84, 0.85, rem=120, etype="book"),     # wrong event type -> skip
+            _msg(0.0, 0.0, rem=110),                      # non-positive -> skip
+            _msg(0.95, 0.96, rem=100),                    # valid -> the only processed tick
+            _msg(0.95, 0.96, rem=5)]))
+        start_cash = 1000.0
+        res = asyncio.run(coro)
+        self.assertIsNotNone(res)                          # the one valid tick traded + settled
+        self.assertEqual(len(db.rounds), 1)
+
+    def test_rem_non_positive_breaks_before_trading(self):
+        # if rem<=0 on the first message, the loop breaks immediately -> no trade, no settle
+        pf, db, done, coro = self._run(_aiter([_msg(0.85, 0.86, rem=0)]))
+        res = asyncio.run(coro)
+        self.assertIsNone(res)
+        self.assertNotIn("TKN", done)
 
 
 if __name__ == "__main__":

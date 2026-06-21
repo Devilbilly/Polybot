@@ -55,6 +55,61 @@ def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict,
     )
 
 
+async def _live_msg_stream(ws, session, token, end_ts, fetch_spot, time_fn):  # pragma: no cover (network)
+    """I/O generator: yield (msg, book, spot, rem) each WS update until the window closes. ALL
+    network lives here so the trading consumer (_trade_one_market) stays pure and unit-testable.
+    `rem` is sampled AFTER the blocking recv+REST so time_progress is never stale."""
+    import asyncio
+    while end_ts - time_fn() > 0:
+        try:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+        except asyncio.TimeoutError:
+            continue
+        book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
+        spot = 0.0
+        if fetch_spot is not None:
+            try:
+                spot = fetch_spot()
+            except Exception:
+                spot = 0.0
+        yield (msg, book, spot, end_ts - time_fn())
+
+
+async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_id, done,
+                            time_fn, log=None):
+    """Consume a market's (msg, book, spot, rem) stream — same filtering + tick processing as the
+    live loop — and ALWAYS settle in `finally` so a mid-market disconnect can never leak the open
+    position into the next new_market(). Settlement + DB record + done-mark happen in `finally`
+    so they occur even when the stream raises (the exception then propagates for the reconnect
+    backoff). Returns the RoundResult or None. Extracted from run() to make this invariant
+    unit-testable (run() injects the live _live_msg_stream)."""
+    recent_bids = []
+    res = None
+    try:
+        async for (msg, book, spot, rem) in msg_stream:
+            if strike == 0.0 and spot > 0.0:
+                strike = spot                       # fallback: first valid spot if no window-open strike
+            if rem <= 0:
+                break
+            for it in (msg if isinstance(msg, list) else [msg]):
+                if it.get("event_type") not in ("price_change", "best_bid_ask"):
+                    continue
+                wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
+                if wb <= 0 or wa <= 0:
+                    continue
+                pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
+                recent_bids.append(wb)
+    finally:
+        if recent_bids:
+            res = pf.settle(winner_from_recent(recent_bids) == "YES")
+            db.log_round(session_id, res, market_id=token, ts=int(time_fn()))
+            done.add(token)
+            if log:
+                log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",
+                         res.round_no, res.winner, res.total_pnl, res.total_cash)
+    return res
+
+
 async def run(config_path: str = "polybot/portfolio.json",
               db_path: str = "polymarket.db"):  # pragma: no cover (needs live network)
     import asyncio, ssl, time, logging
@@ -100,49 +155,21 @@ async def run(config_path: str = "polybot/portfolio.json",
             if not token or token in done:                # already traded/settled -> skip
                 await asyncio.sleep(2); continue
             pf.new_market()
-            recent_bids = []      # last valid YES bids -> median settlement proxy (matches backtest)
             # True settlement reference = BTC at window OPEN (end_ts-300), from Binance history;
-            # fall back to the first valid tick's spot below if the historical fetch fails.
+            # _trade_one_market falls back to the first valid tick's spot if this fetch fails.
             strike = window_open_strike(end_ts, fetch_klines) if fetch_klines is not None else 0.0
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
-                    while end_ts - time.time() > 0:
-                        try:
-                            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
-                        except asyncio.TimeoutError:
-                            continue
-                        book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
-                        spot = 0.0
-                        if fetch_spot is not None:
-                            try:
-                                spot = fetch_spot()
-                                if strike == 0.0:
-                                    strike = spot            # window-open price = strike
-                            except Exception:
-                                spot = 0.0
-                        rem = end_ts - time.time()           # re-sample AFTER blocking I/O (recv+REST)
-                        if rem <= 0:
-                            break
-                        for it in (msg if isinstance(msg, list) else [msg]):
-                            if it.get("event_type") not in ("price_change", "best_bid_ask"):
-                                continue
-                            wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
-                            if wb <= 0 or wa <= 0:
-                                continue
-                            pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); recent_bids.append(wb)
+                    # settle-in-finally + DB record + done-mark all live inside _trade_one_market,
+                    # so a mid-market disconnect settles (no leak) before the exception bubbles here.
+                    await _trade_one_market(
+                        pf, end_ts, strike,
+                        _live_msg_stream(ws, session, token, end_ts, fetch_spot, time.time),
+                        token, db, session_id, done, time.time, log)
             except Exception as e:
                 log.info("[LIVE] reconnect: %s", e)
                 await asyncio.sleep(2)
-            finally:
-                # ALWAYS settle a traded market (even on exception) so the open position is never
-                # leaked into the next market's new_market() reset; mark done to avoid re-trading.
-                if recent_bids:
-                    res = pf.settle(winner_from_recent(recent_bids) == "YES")
-                    db.log_round(session_id, res, market_id=token, ts=int(time.time()))
-                    log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",
-                             res.round_no, res.winner, res.total_pnl, res.total_cash)
-                    done.add(token)
 
 
 if __name__ == "__main__":  # pragma: no cover
