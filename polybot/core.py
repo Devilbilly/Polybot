@@ -1,0 +1,239 @@
+"""
+Core engine: shared by BOTH backtest and live so they can never diverge.
+
+Design: strategies are PURE DECISION LOGIC. They look at a Tick + their Position and
+return Orders. They never touch cash or fills directly. The ExecutionEngine applies fills
+(size caps, slippage, fees) identically everywhere. This is the fix for the bt.py<->l.py
+3x divergence: there is now exactly one execution path.
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
+from typing import List, Optional
+
+
+# ----------------------------- market state -----------------------------
+@dataclass
+class Tick:
+    """One observation of the order book at a moment in a market's life."""
+    ts: str
+    time_progress: float          # 0..1, derived from REAL seconds remaining (no look-ahead)
+    ws_bid: float
+    ws_ask: float
+    bid_p: tuple = (0.0, 0.0, 0.0)   # L1..L3 bid prices
+    bid_s: tuple = (0.0, 0.0, 0.0)   # L1..L3 bid sizes
+    ask_p: tuple = (0.0, 0.0, 0.0)
+    ask_s: tuple = (0.0, 0.0, 0.0)
+
+    # convenience accessors (L1)
+    @property
+    def bp1(self): return self.bid_p[0]
+    @property
+    def bs1(self): return self.bid_s[0]
+    @property
+    def ap1(self): return self.ask_p[0]
+    @property
+    def as1(self): return self.ask_s[0]
+    @property
+    def no_ask(self):  # cost to BUY the NO side via the book
+        return 1.0 - self.bp1
+    @property
+    def no_bid(self):  # proceeds to SELL the NO side
+        return 1.0 - self.ap1
+
+
+# ----------------------------- position -----------------------------
+@dataclass
+class Position:
+    cash: float
+    inv_yes: float = 0.0
+    inv_no: float = 0.0
+    n_entries: int = 0                # total entries this market (yes+no) -> single-entry control
+    # per-market accounting for reporting
+    yes_bought: float = 0.0
+    no_bought: float = 0.0
+    yes_sold: float = 0.0
+    no_sold: float = 0.0
+    start_cash: float = 0.0
+
+    def reset_market(self):
+        self.inv_yes = self.inv_no = 0.0
+        self.n_entries = 0
+        self.yes_bought = self.no_bought = self.yes_sold = self.no_sold = 0.0
+        self.start_cash = self.cash
+
+    def equity(self, tick: Tick) -> float:
+        return self.cash + self.inv_yes * tick.ws_bid + self.inv_no * (1.0 - tick.ws_ask)
+
+
+# ----------------------------- orders -----------------------------
+@dataclass
+class Order:
+    side: str          # 'YES' | 'NO'
+    kind: str          # 'BUY' | 'SELL'
+    usd: float = 0.0   # desired notional for BUY (engine caps by book + cash)
+
+
+# ----------------------------- execution -----------------------------
+class ExecutionEngine:
+    """Applies fills identically for backtest and live. Caps buys by resting book size."""
+    def __init__(self, fee: float = 0.001, slippage: float = 0.002, cap_fills: bool = True):
+        self.fee = fee
+        self.slippage = slippage
+        self.cap_fills = cap_fills
+
+    def execute(self, order: Order, tick: Tick, pos: Position) -> bool:
+        if order.kind == "BUY":
+            return self._buy(order, tick, pos)
+        return self._sell(order, tick, pos)
+
+    def _buy(self, order, tick, pos) -> bool:
+        if order.side == "YES":
+            price, avail = tick.ap1, tick.as1
+        else:
+            price, avail = tick.no_ask, tick.bs1     # buying NO consumes YES bids
+        if price <= 0.0 or price >= 1.0 or avail <= 0.0:
+            return False
+        exec_p = min(0.9999, price + self.slippage)
+        want = order.usd / (exec_p * (1.0 + self.fee))
+        affordable = pos.cash / (exec_p * (1.0 + self.fee))
+        tokens = min(want, affordable)
+        if self.cap_fills:
+            tokens = min(tokens, avail)
+        if tokens < 1.0:
+            return False
+        cost = tokens * exec_p * (1.0 + self.fee)
+        pos.cash -= cost
+        pos.n_entries += 1
+        if order.side == "YES":
+            pos.inv_yes += tokens; pos.yes_bought += tokens
+        else:
+            pos.inv_no += tokens; pos.no_bought += tokens
+        return True
+
+    def _sell(self, order, tick, pos) -> bool:
+        if order.side == "YES":
+            if pos.inv_yes < 1.0:
+                return False
+            price, avail = tick.bp1, tick.bs1
+            exec_p = max(0.0001, price - self.slippage)
+            sold = min(pos.inv_yes, avail) if self.cap_fills else pos.inv_yes
+            if sold < 1.0:
+                return False
+            pos.inv_yes -= sold; pos.yes_sold += sold
+            pos.cash += sold * exec_p * (1.0 - self.fee)
+        else:
+            if pos.inv_no < 1.0:
+                return False
+            price, avail = tick.no_bid, tick.as1
+            exec_p = max(0.0001, price - self.slippage)
+            sold = min(pos.inv_no, avail) if self.cap_fills else pos.inv_no
+            if sold < 1.0:
+                return False
+            pos.inv_no -= sold; pos.no_sold += sold
+            pos.cash += sold * exec_p * (1.0 - self.fee)
+        return True
+
+
+# ----------------------------- strategy base -----------------------------
+class Strategy(ABC):
+    """Pure decision logic. Implement decide(); never touch cash/fills directly."""
+    def __init__(self, name: str, params: dict):
+        self.name = name
+        self.params = params
+
+    @abstractmethod
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        ...
+
+    def reset(self):
+        pass
+
+
+# ----------------------------- risk governor -----------------------------
+class RiskGovernor:
+    """Blocks NEW ENTRIES under three sticky/transient conditions; exits always allowed."""
+    def __init__(self, initial_capital: float, kill_switch_dd=0.25, round_loss_limit=0.08,
+                 min_capital=50.0):
+        self.initial_capital = initial_capital
+        self.kill_switch_dd = kill_switch_dd
+        self.round_loss_limit = round_loss_limit
+        self.min_capital = min_capital
+        self.peak = initial_capital
+        self.killed = False
+        self.halted = False
+        self.round_start_equity = initial_capital
+
+    def new_market(self, equity: float):
+        self.round_start_equity = equity
+
+    def allow_entries(self, equity: float, total_cash: float) -> bool:
+        self.peak = max(self.peak, equity)
+        if total_cash < self.min_capital:
+            self.halted = True
+            return False
+        if self.peak > 0 and (self.peak - equity) / self.peak > self.kill_switch_dd:
+            self.killed = True
+            return False
+        if self.round_start_equity > 0:
+            if (self.round_start_equity - equity) / self.round_start_equity > self.round_loss_limit:
+                return False
+        return not self.killed
+
+
+# ----------------------------- portfolio -----------------------------
+@dataclass
+class RoundResult:
+    round_no: int
+    winner: str
+    total_pnl: float
+    total_cash: float
+    per_strategy: dict
+
+
+class Portfolio:
+    """Runs N strategies on shared ticks via one ExecutionEngine + RiskGovernor."""
+    def __init__(self, strategies: List[Strategy], weights: List[float],
+                 total_capital: float = 1000.0, engine: Optional[ExecutionEngine] = None,
+                 risk: Optional[RiskGovernor] = None):
+        self.strategies = strategies
+        self.engine = engine or ExecutionEngine()
+        self.risk = risk or RiskGovernor(total_capital)
+        self.accounts = [Position(cash=total_capital * w) for w in weights]
+        self.round_no = 0
+
+    def total_cash(self) -> float:
+        return sum(a.cash for a in self.accounts)
+
+    def equity(self, tick: Tick) -> float:
+        return sum(a.equity(tick) for a in self.accounts)
+
+    def new_market(self, opening_tick: Optional[Tick] = None):
+        for s in self.strategies:
+            s.reset()
+        for a in self.accounts:
+            a.reset_market()
+        self.risk.new_market(self.total_cash())
+
+    def process_tick(self, tick: Tick):
+        allow = self.risk.allow_entries(self.equity(tick), self.total_cash())
+        for strat, pos in zip(self.strategies, self.accounts):
+            for order in strat.decide(tick, pos):
+                if order.kind == "BUY" and not allow:
+                    continue
+                self.engine.execute(order, tick, pos)
+
+    def settle(self, winner_yes: bool) -> RoundResult:
+        self.round_no += 1
+        per = {}
+        total_pnl = 0.0
+        for strat, pos in zip(self.strategies, self.accounts):
+            payout = pos.inv_yes if winner_yes else pos.inv_no
+            pos.cash += payout
+            pnl = pos.cash - pos.start_cash
+            total_pnl += pnl
+            per[strat.name] = {"pnl": pnl, "cash": pos.cash,
+                               "yes_bought": pos.yes_bought, "no_bought": pos.no_bought}
+            pos.reset_market()
+        return RoundResult(self.round_no, "YES" if winner_yes else "NO",
+                           total_pnl, self.total_cash(), per)

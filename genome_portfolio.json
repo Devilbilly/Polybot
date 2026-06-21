@@ -1,0 +1,12 @@
+{
+    "strategies": [
+        {"name": "fav_convergence",      "weight": 0.60},
+        {"name": "fav_convergence_late", "weight": 0.40}
+    ],
+    "min_early_depth": 100.0,
+    "min_tick_rate": 3.0,
+    "dd_threshold": 0.40,
+    "kill_switch_dd": 0.25,
+    "round_loss_limit": 0.08,
+    "min_capital": 50.0
+}

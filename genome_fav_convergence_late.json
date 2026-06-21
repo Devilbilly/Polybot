@@ -1,0 +1,10 @@
+{
+    "strategy": "fav_convergence_late",
+    "buy_p": 0.85,
+    "sell_p": 0.96,
+    "max_buy": 1,
+    "stop_p": 0.50,
+    "time_cutoff": 0.70,
+    "depth_threshold": 0.0,
+    "bullet_pct": 0.02
+}

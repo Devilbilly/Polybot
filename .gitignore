@@ -1,0 +1,30 @@
+# data & logs (large, regenerable)
+market_data/
+market_data_*/
+*.log
+*.log.*
+paper_trader_detail.log*
+run.log
+r.log
+
+# databases
+*.db
+*.sqlite
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.coverage
+htmlcov/
+.pytest_cache/
+
+# artifacts / backups
+*.png
+*.backup
+*.backup1
+*.html
+
+# local tooling state
+.claude/
+.remember/

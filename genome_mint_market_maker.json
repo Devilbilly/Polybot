@@ -1,0 +1,7 @@
+{
+    "strategy": "mint_market_maker",
+    "buy_p": 0.11280318404355781,
+    "max_buy": 10,
+    "stop_p": 0.0,
+    "sell_p": 0.14959173643304358
+}
