@@ -91,5 +91,45 @@ class TestLiveHelpers(unittest.TestCase):
         self.assertEqual(t.as1, 100)
 
 
+class TestMarketDiscovery(unittest.TestCase):
+    """Discovery parsing is folded INTO the live bot (not a side script); these pin the pure
+    helpers so a changed-slug fallback is a localised fix, not a silent overnight hang."""
+
+    def test_listing_rows_handles_list_and_wrapped(self):
+        self.assertEqual(LV._listing_rows([{"a": 1}, "x", {"b": 2}]), [{"a": 1}, {"b": 2}])
+        self.assertEqual(LV._listing_rows({"data": [{"a": 1}]}), [{"a": 1}])
+        self.assertEqual(LV._listing_rows({"events": [{"e": 1}]}), [{"e": 1}])
+        self.assertEqual(LV._listing_rows({"nope": 1}), [])
+        self.assertEqual(LV._listing_rows(None), [])
+
+    def test_is_btc_5m_matches_btc_updown_only(self):
+        self.assertTrue(LV._is_btc_5m({"slug": "btc-updown-5m-1700000000", "title": "BTC Up or Down"}))
+        self.assertTrue(LV._is_btc_5m({"title": "Bitcoin Up/Down 5 min"}))
+        self.assertFalse(LV._is_btc_5m({"slug": "eth-updown-5m-1", "title": "ETH up or down"}))
+        self.assertFalse(LV._is_btc_5m({"title": "Bitcoin above $100k by 2027"}))   # btc but not 5m up/down
+
+    def test_token_from_row_event_and_flat_shapes(self):
+        # event shape (nested markets, like extract_token)
+        ev_row = {"markets": [{"clobTokenIds": '["TKA","TKB"]'}]}
+        self.assertEqual(LV._token_from_row(ev_row), "TKA")
+        # flat market shape (clobTokenIds on the row itself, list and json-string)
+        self.assertEqual(LV._token_from_row({"clobTokenIds": ["TK1", "TK2"]}), "TK1")
+        self.assertEqual(LV._token_from_row({"clobTokenIds": '["TK9"]'}), "TK9")
+        self.assertIsNone(LV._token_from_row({"foo": 1}))
+
+    def test_market_end_ts_from_slug_timestamp(self):
+        # historical format: unix ts in the slug -> end = ts + 300
+        self.assertEqual(LV.market_end_ts("btc-updown-5m-1700000000", {}), 1700000000 + 300)
+
+    def test_market_end_ts_from_iso_enddate(self):
+        ts = LV.market_end_ts("some-named-slug", {"endDate": "2026-06-22T00:05:00Z"})
+        self.assertIsNotNone(ts)
+        from datetime import datetime, timezone
+        self.assertEqual(ts, int(datetime(2026, 6, 22, 0, 5, tzinfo=timezone.utc).timestamp()))
+
+    def test_market_end_ts_none_when_unavailable(self):
+        self.assertIsNone(LV.market_end_ts("named-slug-no-ts", {"title": "x"}))
+
+
 if __name__ == "__main__":
     unittest.main()

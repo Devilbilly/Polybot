@@ -119,6 +119,97 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
     return res
 
 
+# ----------------------------- market discovery -----------------------------
+# Fallback listing endpoints, hunted when the guessed timestamp-slug 404s (e.g. the slug format
+# changed since the data was collected). Field shapes below are Polymarket's common ones; the pure
+# parsing helpers are unit-tested, so an API rename is a localised fix, not a silent hang.
+DISCOVERY_LISTINGS = [
+    "https://gamma-api.polymarket.com/events?closed=false&limit=400&order=startDate&ascending=false",
+    "https://gamma-api.polymarket.com/events?closed=false&limit=400&tag_slug=crypto",
+    "https://gamma-api.polymarket.com/markets?closed=false&limit=500&order=startDate&ascending=false",
+]
+
+
+def _listing_rows(data):
+    """Normalise a gamma/clob listing response to a list of dict rows."""
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+    if isinstance(data, dict):
+        for k in ("data", "events", "markets"):
+            if isinstance(data.get(k), list):
+                return [r for r in data[k] if isinstance(r, dict)]
+    return []
+
+
+def _is_btc_5m(row):
+    """Does a listing row look like a BTC up/down 5-minute market?"""
+    blob = json.dumps(row).lower()
+    btc = ("btc" in blob) or ("bitcoin" in blob)
+    direction = ("up" in blob) or ("down" in blob)
+    five = any(k in blob for k in ("5m", "5-min", "5 min", "updown", "up-or-down"))
+    return btc and direction and five
+
+
+def _token_from_row(row):
+    """First CLOB token id from an EVENT row (nested markets) OR a flat MARKET row."""
+    tok = extract_token([row])                      # event shape: row["markets"][].clobTokenIds
+    if tok:
+        return tok
+    ids = row.get("clobTokenIds")                   # flat-market shape
+    if isinstance(ids, str):
+        try: ids = json.loads(ids)
+        except Exception: ids = []
+    return ids[0] if isinstance(ids, list) and ids else None
+
+
+def market_end_ts(slug, row):
+    """Window-END unix ts: prefer a unix timestamp embedded in the slug (historical format), else
+    an ISO end-date field on the row. None if neither is present."""
+    try:
+        tail = str(slug).rsplit("-", 1)[-1]
+        if tail.isdigit() and len(tail) >= 9:
+            return int(tail) + WINDOW_SEC
+    except Exception:
+        pass
+    if isinstance(row, dict):
+        for k in ("endDate", "end_date_iso", "endDateIso", "end", "endTime"):
+            v = row.get(k)
+            if v:
+                try:
+                    from datetime import datetime
+                    return int(datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp())
+                except Exception:
+                    pass
+    return None
+
+
+async def discover_market(session, done, log=None):  # pragma: no cover (network glue; helpers tested)
+    """Find the current open BTC 5-min market -> (token, end_ts, label) or None. Tries the guessed
+    timestamp-slug first (original fast path), then FALLS BACK to hunting listing endpoints so a
+    changed slug format no longer silently blinds the bot. Only endpoint choice is network; all
+    parsing is in the unit-tested helpers above."""
+    import time
+    now = int(time.time())
+    for cand in predicted_slugs(now):                        # 1) fast path: the guessed slug
+        if int(cand.split("-")[-1]) > now:
+            continue
+        ev = await _get_json(session, GAMMA_API.format(cand))
+        if ev and len(ev) > 0 and not ev[0].get("closed"):
+            tok = extract_token(ev)
+            if tok and tok not in done:
+                return tok, int(cand.split("-")[-1]) + WINDOW_SEC, cand
+    for url in DISCOVERY_LISTINGS:                            # 2) fallback: hunt listings
+        for row in _listing_rows(await _get_json(session, url)):
+            if not _is_btc_5m(row):
+                continue
+            tok = _token_from_row(row); ets = market_end_ts(row.get("slug", ""), row)
+            if tok and tok not in done and ets and ets > now:
+                if log:
+                    log.info("[LIVE] discovered via listing: slug=%s end_ts=%s", row.get("slug"), ets)
+                return tok, ets, row.get("slug", "listing")
+    return None
+
+
 async def _connectivity_report(session, log):  # pragma: no cover (network)
     """One-time startup probe so the (overnight) log shows immediately whether each endpoint is
     reachable — turns a silent 'is it dead?' into a diagnosable 'gamma returned 404'."""
@@ -139,8 +230,8 @@ async def _connectivity_report(session, log):  # pragma: no cover (network)
         log.info("[LIVE] connectivity %-20s OK  BTC=$%.2f", "binance(spot)", fetch_spot())
     except Exception as e:
         log.info("[LIVE] connectivity %-20s FAILED: %s", "binance(spot)", type(e).__name__)
-    log.info("[LIVE] (if gamma is not HTTP 200, the slug/endpoint changed since data collection — "
-             "run `python -m polybot.probe` to discover the current market)")
+    log.info("[LIVE] (if gamma is not HTTP 200 it's likely geo/network-blocked or the API changed; "
+             "run `python -m polybot.live --probe` to see what discovery finds)")
 
 
 async def run(config_path: str = "polybot/portfolio.json",
@@ -168,35 +259,22 @@ async def run(config_path: str = "polybot/portfolio.json",
         done = set()          # tokens already settled this session -> never re-trade/double-count
         attempts = 0; search_start = time.time(); last_hb = 0.0
         while True:
-            now = int(time.time())
-            slug = None; last_status = "no-response"
-            for cand in predicted_slugs(now):
-                if int(cand.split("-")[-1]) > now:        # skip not-yet-STARTED future windows
-                    continue
-                d = await _get_json(session, GAMMA_API.format(cand))
-                last_status = "open" if (d and len(d) > 0 and not d[0].get("closed")) else (
-                    "closed/empty" if d else "404/err")
-                if d and len(d) > 0 and not d[0].get("closed"):
-                    slug = cand; break
-            if not slug:
+            found = await discover_market(session, done, log)
+            if not found:
                 attempts += 1
                 if time.time() - last_hb > 30:            # heartbeat so it's visibly ALIVE
                     log.info("[LIVE] searching for an open BTC 5-min market… %d attempts, %.0fs "
-                             "(last gamma: %s, tried %s)", attempts, time.time() - search_start,
-                             last_status, predicted_slugs(now)[0])
+                             "(guessed slug %s + %d listing fallbacks, none matched)",
+                             attempts, time.time() - search_start,
+                             predicted_slugs(int(time.time()))[0], len(DISCOVERY_LISTINGS))
                     last_hb = time.time()
                 await asyncio.sleep(2); continue
+            token, end_ts, label = found
             attempts = 0; search_start = time.time(); last_hb = 0.0
-            end_ts = int(slug.split("-")[-1]) + WINDOW_SEC
-            ev = await _get_json(session, GAMMA_API.format(slug))
-            token = extract_token(ev)
-            if not token or token in done:                # already traded/settled -> skip
-                log.info("[LIVE] %s: no tradable token (or already traded) — skipping", slug)
-                await asyncio.sleep(2); continue
             pf.new_market()
             strike = window_open_strike(end_ts, fetch_klines) if fetch_klines is not None else 0.0
             log.info("[LIVE] >>> trading %s  token=%s…  %.0fs left  strike(open)=%.2f  cash=$%.2f",
-                     slug, str(token)[:12], end_ts - time.time(), strike, pf.total_cash())
+                     label, str(token)[:12], end_ts - time.time(), strike, pf.total_cash())
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
@@ -210,6 +288,27 @@ async def run(config_path: str = "polybot/portfolio.json",
                 await asyncio.sleep(2)
 
 
+async def probe():  # pragma: no cover (network)
+    """`python -m polybot.live --probe`: one-shot diagnosis — connectivity report + a single
+    discovery attempt — then exit. Replaces the old standalone probe script."""
+    import ssl, logging, aiohttp
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    log = logging.getLogger("polybot.live")
+    ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
+    async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
+                                     connector=aiohttp.TCPConnector(ssl=False)) as session:
+        await _connectivity_report(session, log)
+        log.info("[PROBE] attempting market discovery (guessed slug + %d listing fallbacks)…",
+                 len(DISCOVERY_LISTINGS))
+        found = await discover_market(session, set(), log)
+        if found:
+            tok, ets, label = found
+            log.info("[PROBE] FOUND: slug/label=%s  token=%s…  end_ts=%s", label, str(tok)[:16], ets)
+        else:
+            log.info("[PROBE] no live BTC 5-min market found. Either none is open now, Polymarket is "
+                     "geo/network-blocked from here, or the API shape changed (paste this output).")
+
+
 if __name__ == "__main__":  # pragma: no cover
-    import asyncio
-    asyncio.run(run())
+    import asyncio, sys
+    asyncio.run(probe() if "--probe" in sys.argv else run())
