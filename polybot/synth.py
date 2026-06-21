@@ -17,10 +17,12 @@ from .btc_model import prob_up
 
 
 def market_from_path(spot, strike: float = None, window: int = 300, vol: float = 0.0006,
-                     lag: int = 0, noise: float = 0.0, spread: float = 0.01, rng=None
-                     ) -> Dict[str, np.ndarray]:
+                     lag: int = 0, noise: float = 0.0, spread: float = 0.01, rng=None,
+                     fav_bias: float = 0.0) -> Dict[str, np.ndarray]:
     """Build an engine-format market from ANY BTC price path (real or synthetic). The book
-    mid is the CORRECT model probability given the spot `lag` ticks ago (efficient but lagging)."""
+    mid is the CORRECT model probability given the spot `lag` ticks ago (efficient but lagging).
+    `fav_bias` (0..1) compresses the mid toward 0.5 -> favorites underpriced / longshots
+    overpriced (the behavioural favorite-longshot bias), so both edges can coexist."""
     spot = np.asarray(spot, dtype=float)
     n = len(spot)
     if strike is None:
@@ -30,6 +32,8 @@ def market_from_path(spot, strike: float = None, window: int = 300, vol: float =
     mid = np.empty(n)
     for i in range(n):
         p = prob_up(spot[max(0, i - lag)], strike, max(0.0, rem[i]), vol)
+        if fav_bias > 0.0:
+            p = 0.5 + (p - 0.5) * (1.0 - fav_bias)        # compress toward 0.5
         if noise > 0.0 and rng is not None:
             p = min(0.99, max(0.01, p + rng.gauss(0, noise)))
         mid[i] = p

@@ -55,6 +55,32 @@ def monte_carlo_ordering(markets: List[Dict[str, np.ndarray]], cfg: dict,
         kill_rate=kills / n_runs, positive_rate=pos / n_runs)
 
 
+def _sharpe(x: np.ndarray) -> float:
+    return float(x.mean() / x.std() * np.sqrt(len(x))) if len(x) > 1 and x.std() > 0 else 0.0
+
+
+def per_strategy_fractions(markets: List[Dict[str, np.ndarray]],
+                           cfgs: List[dict]) -> List[np.ndarray]:
+    """For each SINGLE-strategy config, its per-market return-fraction array."""
+    out = []
+    for c in cfgs:
+        s = c["strategies"][0]
+        key = s.get("id") or f"{s['name']}#0"
+        out.append(np.array([d[key] for d in compute_fractions(markets, c)]))
+    return out
+
+
+def diversification_report(markets: List[Dict[str, np.ndarray]], cfgs: List[dict]) -> dict:
+    """Per-strategy Sharpe, the between-strategy return-correlation matrix, and the
+    equal-weight combined Sharpe. combined > max(individual) => genuine decorrelation gain."""
+    fr = per_strategy_fractions(markets, cfgs)
+    corr = np.corrcoef(fr) if len(fr) > 1 else np.array([[1.0]])
+    combined = np.mean(fr, axis=0)
+    return {"sharpe": [_sharpe(x) for x in fr],
+            "corr": corr,
+            "combined_sharpe": _sharpe(combined)}
+
+
 def cost_sensitivity(markets: List[Dict[str, np.ndarray]], cfg: dict,
                      grid=((0.001, 0.002), (0.002, 0.004), (0.002, 0.010))) -> List[dict]:
     out = []

@@ -43,6 +43,42 @@ class TestMonteCarlo(unittest.TestCase):
         self.assertEqual(a.roi_mean, b.roi_mean)
 
 
+class TestDiversification(unittest.TestCase):
+    def _markets(self):
+        from polybot.synth import market_from_path
+        import random, math
+        rng = random.Random(2)
+        def gbm(n=300, vol=0.0006, strike=100000.0):
+            s = [strike]
+            for _ in range(n - 1):
+                s.append(s[-1] * math.exp(vol * rng.gauss(0, 1)))
+            return s
+        return [market_from_path(gbm(), vol=0.0006, lag=5, fav_bias=0.15) for _ in range(400)]
+
+    def _cfgs(self):
+        eng = {"fee": 0.001, "slippage": 0.002, "cap_fills": True}
+        risk = {"kill_switch_dd": 0.25, "round_loss_limit": 0.50, "min_capital": 50.0}
+        fav = {"strategies": [{"id": "fav", "name": "fav_convergence", "weight": 1.0,
+                "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 1}}],
+               "engine": eng, "risk": risk}
+        spot = {"strategies": [{"id": "spot", "name": "btc_spot_divergence", "weight": 1.0,
+                 "params": {"vol": 0.0006, "edge": 0.04, "window": 300, "time_cutoff": 0.0, "max_buy": 1}}],
+                "engine": eng, "risk": risk}
+        return [fav, spot]
+
+    def test_two_edges_are_decorrelated_and_combine_better(self):
+        rep = R.diversification_report(self._markets(), self._cfgs())
+        self.assertEqual(rep["corr"].shape, (2, 2))
+        self.assertLess(abs(rep["corr"][0, 1]), 0.5)                  # weakly correlated
+        self.assertGreaterEqual(rep["combined_sharpe"], max(rep["sharpe"]) - 1e-6)  # diversification gain
+
+    def test_per_strategy_fractions_shapes(self):
+        markets = self._markets()
+        fr = R.per_strategy_fractions(markets, self._cfgs())
+        self.assertEqual(len(fr), 2)
+        self.assertEqual(len(fr[0]), len(markets))
+
+
 class TestCostSensitivity(unittest.TestCase):
     def test_higher_cost_not_better(self):
         markets = [make_market(fav="YES") for _ in range(12)]
