@@ -45,7 +45,8 @@ def market_from_path(spot, strike: float = None, window: int = 300, vol: float =
             "bid_p1": ws_bid, "bid_s1": big, "ask_p1": ws_ask, "ask_s1": big,
             "bid_p2": z, "bid_s2": z, "ask_p2": z, "ask_s2": z,
             "bid_p3": z, "bid_s3": z, "ask_p3": z, "ask_s3": z,
-            "spot": spot, "strike": np.full(n, strike), "winner": winner}
+            "spot": spot, "strike": np.full(n, strike), "winner": winner,
+            "window": float(window)}     # so rem->time_progress uses the right window (lag=0 control stays exact)
 
 
 def synth_market(rng, n: int = 300, window: int = 300, vol: float = 0.0006,

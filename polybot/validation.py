@@ -65,10 +65,28 @@ def assert_causal(make_strategy: Callable[[Dict[str, np.ndarray]], Strategy],
     return True
 
 
-def check_all_strategies_causal(market: Dict[str, np.ndarray], params: dict = None) -> Dict[str, bool]:
-    """Gate every registered strategy. Real strategies ignore the market view -> causal."""
+def _gate_market() -> Dict[str, np.ndarray]:
+    """A market where EVERY strategy actually trades (favorite bias + spot lag), so the causal
+    check is non-vacuous -- in particular btc_spot_divergence must trade, or a future-peeking
+    version would pass trivially with an empty decision log."""
+    import math
+    import random
+    from .synth import market_from_path
+    rng = random.Random(0)
+    s = [100000.0]
+    for _ in range(199):
+        s.append(s[-1] * math.exp(0.0006 * rng.gauss(0, 1)))
+    return market_from_path(np.array(s), vol=0.0006, lag=5, fav_bias=0.15)
+
+
+def check_all_strategies_causal(market: Dict[str, np.ndarray] = None, params: dict = None) -> Dict[str, bool]:
+    """Gate every registered strategy on a market where each TRADES (so the truncation test is
+    non-vacuous). Real strategies ignore the market view -> causal."""
+    if market is None:
+        market = _gate_market()
     params = params or {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50,
-                        "max_buy": 2, "add_gap": 0.04, "lookback": 20, "min_rise": 0.0}
+                        "max_buy": 2, "add_gap": 0.04, "lookback": 20, "min_rise": 0.0,
+                        "vol": 0.0006, "edge": 0.04, "window": 300}
     out = {}
     for name in available():
         out[name] = assert_causal(lambda mv, n=name: get_strategy(n, params), market)

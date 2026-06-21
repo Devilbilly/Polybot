@@ -23,12 +23,13 @@ def ticks_from_arrays(a: Dict[str, np.ndarray]):
     """Yield Tick objects from a loaded market dict (look-ahead-free time)."""
     n = len(a["ws_bid"])
     rem = a["rem"]
+    win = float(a.get("window", 300.0))      # default 300 for real data; synth carries its own
     for i in range(n):
         wb = a["ws_bid"][i]; wa = a["ws_ask"][i]
         if wb <= 0.0 or wa <= 0.0:
             continue
         r = rem[i]
-        tp = (1.0 - r / 300.0) if r >= 0.0 else (i / n)
+        tp = (1.0 - r / win) if r >= 0.0 else (i / n)
         tp = 0.0 if tp < 0.0 else (1.0 if tp > 1.0 else tp)
         yield Tick(
             ts=str(i), time_progress=tp, ws_bid=wb, ws_ask=wa,

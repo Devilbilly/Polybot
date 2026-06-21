@@ -25,9 +25,21 @@ class TestCausality(unittest.TestCase):
         self.market = make_market(n=200, fav="YES")
 
     def test_real_strategies_are_causal(self):
-        results = V.check_all_strategies_causal(self.market)
+        results = V.check_all_strategies_causal()      # non-vacuous both-edges gate market
         self.assertTrue(all(results.values()), results)
-        self.assertIn("scale_in_favorite", results)   # newest strategy gated too
+        self.assertIn("scale_in_favorite", results)
+        self.assertIn("btc_spot_divergence", results)
+
+    def test_gate_market_is_non_vacuous_for_spot(self):
+        # the registry-wide causal gate must make btc_spot_divergence actually TRADE,
+        # else a future-peeking version would pass with a trivially-empty decision log.
+        from polybot.strategies import get_strategy
+        mk = V._gate_market()
+        log = V._decision_log(
+            lambda mv: get_strategy("btc_spot_divergence",
+                                    {"vol": 0.0006, "edge": 0.04, "window": 300, "time_cutoff": 0.0, "max_buy": 1}),
+            mk)
+        self.assertTrue(any(orders for orders in log), "spot strategy must trade on the gate market")
 
     def test_cheating_strategy_is_caught(self):
         with self.assertRaises(LookaheadError):
