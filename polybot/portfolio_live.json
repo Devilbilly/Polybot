@@ -1,0 +1,17 @@
+{
+    "_comment": "TWO-EDGE LIVE config. Favorite sleeves (behavioural edge) run everywhere; the btc_spot_divergence sleeve (informational edge) idles on historical data lacking spot and ACTIVATES live once recorder/live populate Tick.spot. Use this ONLY live (with a BTC spot feed); use portfolio.json for historical/favorites-only backtests. Spot sleeve uses self-calibrating vol (vol_window) and a selective edge threshold (iter 22 finding: conservative => higher win rate).",
+    "strategies": [
+        {"id": "fav_early", "name": "scale_in_favorite", "weight": 0.28,
+         "params": {"buy_p": 0.60, "sell_p": 0.80, "time_cutoff": 0.40, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.02, "lookback": 50, "min_rise": 0.02}},
+        {"id": "fav_main", "name": "scale_in_favorite", "weight": 0.28,
+         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.02, "lookback": 50, "min_rise": 0.02}},
+        {"id": "fav_late", "name": "fav_convergence", "weight": 0.07,
+         "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}},
+        {"id": "fav_final", "name": "fav_convergence", "weight": 0.07,
+         "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}},
+        {"id": "spot", "name": "btc_spot_divergence", "weight": 0.30,
+         "params": {"vol": 0.0006, "vol_window": 60, "edge": 0.08, "exit_edge": 0.0, "window": 300, "time_cutoff": 0.0, "max_buy": 1, "bullet_pct": 0.02}}
+    ],
+    "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true, "walk_book": true},
+    "risk": {"kill_switch_dd": 0.25, "round_loss_limit": 0.08, "min_capital": 50.0, "soft_dd": 0.15}
+}
