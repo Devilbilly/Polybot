@@ -184,7 +184,8 @@ class RiskGovernor:
         # soft_dd: drawdown at which bet sizing starts shrinking linearly toward 0 at kill_switch_dd.
         # Default = kill_switch_dd -> no gradual de-risking (binary, backward compatible).
         self.soft_dd = kill_switch_dd if soft_dd is None else soft_dd
-        self.peak = initial_capital
+        self.peak = initial_capital            # MTM high-water (intra-market de-risking only)
+        self.realized_peak = initial_capital   # realized/settled high-water (drives the kill-switch)
         self.killed = False
         self.halted = False
         self.round_start_equity = initial_capital
@@ -201,21 +202,26 @@ class RiskGovernor:
             return 0.0
         return 1.0 - (dd - self.soft_dd) / (self.kill_switch_dd - self.soft_dd)
 
-    def new_market(self, equity: float):
-        self.round_start_equity = equity
+    def new_market(self, realized_equity: float):
+        # The kill-switch is a BETWEEN-market capital-preservation decision evaluated on REALIZED
+        # equity (positions are flat here) -- NOT intra-market mark-to-market swings, so a permanent
+        # halt cannot fire on an unrealized paper high/low that settles differently.
+        self.realized_peak = max(self.realized_peak, realized_equity)
+        if self.realized_peak > 0 and (self.realized_peak - realized_equity) / self.realized_peak > self.kill_switch_dd:
+            self.killed = True
+        self.round_start_equity = realized_equity
 
     def allow_entries(self, equity: float, total_cash: float) -> bool:
-        self.peak = max(self.peak, equity)
+        self.peak = max(self.peak, equity)            # MTM peak feeds size_multiplier (intra-market)
+        if self.killed:
+            return False
         if total_cash < self.min_capital:
             self.halted = True
-            return False
-        if self.peak > 0 and (self.peak - equity) / self.peak > self.kill_switch_dd:
-            self.killed = True
             return False
         if self.round_start_equity > 0:
             if (self.round_start_equity - equity) / self.round_start_equity > self.round_loss_limit:
                 return False
-        return not self.killed
+        return True
 
 
 # ----------------------------- portfolio -----------------------------

@@ -133,12 +133,21 @@ class TestRiskGovernor(unittest.TestCase):
         self.assertFalse(r.allow_entries(40.0, 40.0))
         self.assertTrue(r.halted)
 
-    def test_kill_switch_sticky(self):
+    def test_kill_switch_on_realized_drawdown(self):
+        # the kill-switch fires on REALIZED (between-market) drawdown, evaluated in new_market
         r = RiskGovernor(1000.0, kill_switch_dd=0.25)
-        r.allow_entries(1000.0, 1000.0)            # peak=1000
-        self.assertFalse(r.allow_entries(700.0, 700.0))   # -30% > 25%
+        r.new_market(1000.0)                       # realized peak 1000
+        r.new_market(700.0)                        # -30% realized -> kill
         self.assertTrue(r.killed)
-        self.assertFalse(r.allow_entries(999.0, 999.0))   # stays killed
+        self.assertFalse(r.allow_entries(999.0, 999.0))   # stays killed (irreversible)
+
+    def test_kill_switch_ignores_intramarket_mtm(self):
+        # a deep INTRA-market mark-to-market dip must NOT permanently kill (it may settle fine);
+        # the round-loss-limit blocks entries for that market, but the permanent kill stays off.
+        r = RiskGovernor(1000.0, kill_switch_dd=0.25, round_loss_limit=0.08)
+        r.new_market(1000.0)
+        self.assertFalse(r.allow_entries(600.0, 200.0))   # -40% MTM -> round-loss blocks entries
+        self.assertFalse(r.killed)                         # but NOT permanently killed on paper swing
 
     def test_round_loss_limit(self):
         r = RiskGovernor(1000.0, round_loss_limit=0.05)
