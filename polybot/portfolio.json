@@ -1,12 +1,12 @@
 {
     "strategies": [
-        {"id": "fav_early", "name": "scale_in_favorite", "weight": 0.30,
+        {"id": "fav_early", "name": "scale_in_favorite", "weight": 0.40,
          "params": {"buy_p": 0.60, "sell_p": 0.80, "time_cutoff": 0.40, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.02, "lookback": 50, "min_rise": 0.02}},
-        {"id": "fav_main", "name": "scale_in_favorite", "weight": 0.30,
+        {"id": "fav_main", "name": "scale_in_favorite", "weight": 0.40,
          "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.02, "lookback": 50, "min_rise": 0.02}},
-        {"id": "fav_late", "name": "fav_convergence", "weight": 0.20,
+        {"id": "fav_late", "name": "fav_convergence", "weight": 0.10,
          "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}},
-        {"id": "fav_final", "name": "fav_convergence", "weight": 0.20,
+        {"id": "fav_final", "name": "fav_convergence", "weight": 0.10,
          "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}}
     ],
     "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true},
