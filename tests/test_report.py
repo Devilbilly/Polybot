@@ -9,9 +9,11 @@ class TestFavoriteValidation(unittest.TestCase):
                   [make_market(fav="NO") for _ in range(10)] + \
                   [make_reversal_market() for _ in range(5)]
         rep = R.favorite_validation(markets, folds=3)
-        for k in ("oos_roi_pct", "cv_all_positive", "mc_kill_rate", "cost_roi"):
+        for k in ("oos_roi_pct", "cv_all_positive", "mc_kill_rate", "cost_roi",
+                  "seq_all_positive", "seq_segments_roi"):
             self.assertIn(k, rep)
         self.assertEqual(len(rep["cv_folds_roi"]), 3)
+        self.assertEqual(len(rep["seq_segments_roi"]), 6)
         self.assertEqual(len(rep["cost_roi"]), 3)
         self.assertTrue(0.0 <= rep["mc_kill_rate"] <= 1.0)
 

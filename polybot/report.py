@@ -14,7 +14,7 @@ import numpy as np
 from . import backtester as bt
 from .paper import paper_trade
 from .robustness import (monte_carlo_ordering, cost_sensitivity, diversification_report,
-                         capacity_curve)
+                         capacity_curve, sequential_stability, depth_by_price)
 
 ENG = {"fee": 0.001, "slippage": 0.002, "cap_fills": True}
 RISK = {"kill_switch_dd": 0.25, "round_loss_limit": 0.08, "min_capital": 50.0}
@@ -37,12 +37,15 @@ def favorite_validation(markets: List[Dict[str, np.ndarray]], cfg: dict = None, 
     mc = monte_carlo_ordering(markets, cfg, n_runs=500)
     costs = cost_sensitivity(markets, cfg)
     cap = capacity_curve(markets, cfg, capitals=(1_000, 100_000))
+    seq = sequential_stability(markets, cfg, k=6)        # contiguous-segment / no-decay check
     return {
         "oos_roi_pct": oos.roi_pct, "oos_dd_pct": oos.max_dd_pct, "oos_win_pct": oos.win_rate_pct,
         "cv_folds_roi": cv, "cv_all_positive": all(r > 0 for r in cv), "cv_min": min(cv),
         "mc_kill_rate": mc.kill_rate, "mc_dd_max": mc.dd_max, "mc_positive_rate": mc.positive_rate,
         "cost_roi": [(c["slippage"], c["roi_pct"]) for c in costs],
         "capacity": [(c["capital"], c["roi_pct"]) for c in cap],
+        "seq_segments_roi": [round(s["roi_pct"]) for s in seq],
+        "seq_all_positive": all(s["roi_pct"] > 0 for s in seq),
     }
 
 
@@ -93,10 +96,15 @@ def main(data_dir: str = "market_data"):  # pragma: no cover (slow, needs data)
     f = favorite_validation(markets)
     print(f"    OOS paper trade : ROI {f['oos_roi_pct']:+.0f}%  DD {f['oos_dd_pct']:.1f}%  win {f['oos_win_pct']:.0f}%")
     print(f"    5-fold CV       : all positive={f['cv_all_positive']}  worst fold {f['cv_min']:+.0f}%")
+    print(f"    Sequential segs : all positive={f['seq_all_positive']}  segs {f['seq_segments_roi']}  (no temporal decay)")
     print(f"    Monte-Carlo     : kill-rate {f['mc_kill_rate']*100:.0f}%  worst DD {f['mc_dd_max']:.1f}%  positive {f['mc_positive_rate']*100:.0f}%")
     print(f"    Cost (slip→ROI) : " + "  ".join(f"{s:.3f}→{r:+.0f}%" for s, r in f["cost_roi"]))
     print(f"    Capacity ($→ROI): " + "  ".join(f"${c:,}→{r:+.0f}%" for c, r in f["capacity"])
           + "   (thin books -> small-capacity edge)")
+    dbp = depth_by_price(markets)
+    if dbp:
+        print(f"    Book $depth     : " + "  ".join(f"{p:.2f}:${d:.0f}" for p, d in sorted(dbp.items())[::2])
+              + "   (deeper near extremes)")
     print("\n[2] SPOT EDGE  (synthetic; edge requires sufficient market lag)")
     s = spot_validation()
     print(f"    lag=0 (control) : ROI {s['lag0_roi_pct']:+.1f}%  -> control_passes={s['control_passes']}")
