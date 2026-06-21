@@ -45,6 +45,19 @@ class FavConvergence(Strategy):
         self.stop = params.get("stop_p", 0.50)         # reversal exit level
         self.max_entries = params.get("max_buy", 1)
         self.bullet_pct = params.get("bullet_pct", 0.02)
+        # Optional BTC-spot confirmation (shared by all favorite strategies). confirm=0 -> off.
+        # When >0 AND spot is available, only buy a side the spot model favors by >= confirm
+        # (spot leads the book -> vetoes favorites about to be upset). No-op without spot.
+        self.confirm = params.get("confirm", 0.0)
+        self.vol = params.get("vol", 0.0006)
+        self.window = params.get("window", 300)
+
+    def _spot_confirms(self, tick: Tick, side: str) -> bool:
+        if self.confirm <= 0.0 or tick.spot <= 0.0 or tick.strike <= 0.0:
+            return True
+        from .btc_model import prob_up
+        p = prob_up(tick.spot, tick.strike, max(0.0, (1.0 - tick.time_progress) * self.window), self.vol)
+        return (p >= self.confirm) if side == "YES" else ((1.0 - p) >= self.confirm)
 
     def _reversal_stop(self, tick: Tick, pos: Position) -> List[Order]:
         """Exit a held side if it reversed below stop_p (no longer the favorite)."""
@@ -63,9 +76,9 @@ class FavConvergence(Strategy):
         orders = self._reversal_stop(tick, pos)
         if self._can_enter(tick, pos):
             usd = pos.cash * self.bullet_pct
-            if self.lo <= tick.ap1 <= self.hi:
+            if self.lo <= tick.ap1 <= self.hi and self._spot_confirms(tick, "YES"):
                 orders.append(Order("YES", "BUY", usd))
-            elif self.lo <= tick.no_ask <= self.hi:
+            elif self.lo <= tick.no_ask <= self.hi and self._spot_confirms(tick, "NO"):
                 orders.append(Order("NO", "BUY", usd))
         return orders
 
@@ -97,9 +110,9 @@ class MomentumFavorite(FavConvergence):
         if self._can_enter(tick, pos) and len(self._hist) > self.lookback:
             rise = tick.ws_bid - self._hist[0]          # change over the lookback window
             usd = pos.cash * self.bullet_pct
-            if self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise:
+            if self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise and self._spot_confirms(tick, "YES"):
                 orders.append(Order("YES", "BUY", usd))      # YES favorite, rising
-            elif self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise:
+            elif self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise and self._spot_confirms(tick, "NO"):
                 orders.append(Order("NO", "BUY", usd))       # NO favorite (YES bid falling)
         return orders
 
@@ -125,8 +138,8 @@ class ScaleInFavorite(MomentumFavorite):
         if self._can_enter(tick, pos) and len(self._hist) > self.lookback:
             rise = tick.ws_bid - self._hist[0]
             usd = pos.cash * self.bullet_pct
-            yes_ok = self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise
-            no_ok = self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise
+            yes_ok = self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise and self._spot_confirms(tick, "YES")
+            no_ok = self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise and self._spot_confirms(tick, "NO")
             if self._side is None:                       # first commitment
                 if yes_ok:
                     self._side, self._last_price = "YES", tick.ap1
@@ -210,33 +223,12 @@ class BtcSpotDivergence(Strategy):
 
 @register("spot_confirmed_favorite")
 class SpotConfirmedFavorite(FavConvergence):
-    """FavConvergence, but each buy is CONFIRMED by the BTC-spot model when spot is available:
-    only buy a favorite the spot model also favors. Because spot LEADS the prediction book, it
-    can veto favorites about to be upset (the favorite edge's main loss source) BEFORE entry.
-    A no-op filter on historical data lacking spot -> identical to FavConvergence there, so it
-    is safe to deploy and only adds value live."""
+    """FavConvergence with spot-confirmation ON by default (confirm=0.50): buy a favorite only
+    if the BTC-spot model also favors that side -> vetoes favorites about to be upset (spot
+    leads the book). No-op without spot (== FavConvergence). Spot-confirmation is also available
+    on momentum_favorite / scale_in_favorite via the shared `confirm` param."""
     def __init__(self, name, params):
-        super().__init__(name, params)
-        self.vol = params.get("vol", 0.0006)
-        self.window = params.get("window", 300)
-        self.confirm = params.get("confirm", 0.50)   # spot model must favor the side by >= this
-
-    def decide(self, tick: Tick, pos: Position) -> List[Order]:
-        orders = self._reversal_stop(tick, pos)
-        if self._can_enter(tick, pos):
-            usd = pos.cash * self.bullet_pct
-            ok_yes = ok_no = True
-            if tick.spot > 0.0 and tick.strike > 0.0:          # spot available -> confirm
-                from .btc_model import prob_up
-                secs_left = max(0.0, (1.0 - tick.time_progress) * self.window)
-                p = prob_up(tick.spot, tick.strike, secs_left, self.vol)
-                ok_yes = p >= self.confirm
-                ok_no = (1.0 - p) >= self.confirm
-            if self.lo <= tick.ap1 <= self.hi and ok_yes:
-                orders.append(Order("YES", "BUY", usd))
-            elif self.lo <= tick.no_ask <= self.hi and ok_no:
-                orders.append(Order("NO", "BUY", usd))
-        return orders
+        super().__init__(name, {**params, "confirm": params.get("confirm", 0.50)})
 
 
 @register("noop")
