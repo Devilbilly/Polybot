@@ -107,6 +107,31 @@ class TestCapacity(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["roi_pct"], rows[1]["roi_pct"], delta=1.0)
 
 
+class TestDepthByPrice(unittest.TestCase):
+    def _market_with_depth_rising_in_price(self, n=300):
+        import numpy as np
+        rem = np.linspace(300.0, 0.0, n)
+        ask = np.linspace(0.62, 0.95, n)          # price rises across the late window
+        bid = ask - 0.01
+        sizes = ask * 1000                         # token size scaled so $depth rises with price
+        a = {"rem": rem, "ws_bid": bid, "ws_ask": ask,
+             "bid_p1": bid, "bid_s1": sizes, "ask_p1": ask, "ask_s1": sizes}
+        for c in ["bid_p2", "bid_s2", "ask_p2", "ask_s2", "bid_p3", "bid_s3", "ask_p3", "ask_s3"]:
+            a[c] = np.zeros(n)
+        a["winner"] = "YES"
+        return a
+
+    def test_depth_grows_with_price(self):
+        markets = [self._market_with_depth_rising_in_price() for _ in range(5)]
+        d = R.depth_by_price(markets)
+        keys = sorted(d)
+        self.assertGreater(len(keys), 3)
+        self.assertGreater(d[keys[-1]], d[keys[0]])     # high-price bucket deeper than low
+
+    def test_empty_safe(self):
+        self.assertEqual(R.depth_by_price([]), {})
+
+
 class TestCostSensitivity(unittest.TestCase):
     def test_higher_cost_not_better(self):
         markets = [make_market(fav="YES") for _ in range(12)]

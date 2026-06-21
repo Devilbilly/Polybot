@@ -113,6 +113,23 @@ def sequential_stability(markets: List[Dict[str, np.ndarray]], cfg: dict,
     return out
 
 
+def depth_by_price(markets: List[Dict[str, np.ndarray]], price_lo=0.60, price_hi=0.97,
+                   tp_min=0.5) -> Dict[float, float]:
+    """Median L1 $-depth of the favorite side by 0.05 price bucket (late window). Book depth
+    grows with price (MMs post deeper near the extremes), so high-favorite sleeves carry more
+    CAPACITY. Relevant only ABOVE the edge's effective capacity (~$1-10k); below it, more
+    trades (early/main sleeves) win — so this informs large-capital allocation, not the
+    small-capital deployed weights."""
+    buckets: Dict[float, list] = {}
+    for m in markets:
+        ask = m["ws_ask"]; aS = m["ask_s1"]; tp = 1.0 - m["rem"] / 300.0
+        sel = (tp >= tp_min) & (ask >= price_lo) & (ask <= price_hi)
+        for p, s in zip(ask[sel], aS[sel] * ask[sel]):
+            b = round(p * 20) / 20
+            buckets.setdefault(b, []).append(s)
+    return {b: float(np.median(v)) for b, v in sorted(buckets.items()) if len(v) >= 20}
+
+
 def cost_sensitivity(markets: List[Dict[str, np.ndarray]], cfg: dict,
                      grid=((0.001, 0.002), (0.002, 0.004), (0.002, 0.010))) -> List[dict]:
     out = []
