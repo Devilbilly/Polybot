@@ -11,7 +11,7 @@ from typing import Optional
 
 from .core import Tick, Portfolio, ExecutionEngine, RiskGovernor
 from .strategies import get_strategy
-from .recorder import (predicted_slugs, parse_book, winner_from_last,
+from .recorder import (predicted_slugs, parse_book, winner_from_recent,
                        WS_URI, GAMMA_API, CLOB_BOOK, WINDOW_SEC, _get_json)
 
 
@@ -86,7 +86,7 @@ async def run(config_path: str = "polybot/portfolio.json",
             if not token or token in done:                # already traded/settled -> skip
                 await asyncio.sleep(2); continue
             pf.new_market()
-            last_bid = None
+            recent_bids = []      # last valid YES bids -> median settlement proxy (matches backtest)
             strike = 0.0          # BTC spot at window open (set on first tick)
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
@@ -114,15 +114,15 @@ async def run(config_path: str = "polybot/portfolio.json",
                             wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
                             if wb <= 0 or wa <= 0:
                                 continue
-                            pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); last_bid = wb
+                            pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); recent_bids.append(wb)
             except Exception as e:
                 log.info("[LIVE] reconnect: %s", e)
                 await asyncio.sleep(2)
             finally:
                 # ALWAYS settle a traded market (even on exception) so the open position is never
                 # leaked into the next market's new_market() reset; mark done to avoid re-trading.
-                if last_bid is not None:
-                    res = pf.settle(winner_from_last(last_bid) == "YES")
+                if recent_bids:
+                    res = pf.settle(winner_from_recent(recent_bids) == "YES")
                     db.log_round(session_id, res, market_id=token, ts=int(time.time()))
                     log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",
                              res.round_no, res.winner, res.total_pnl, res.total_cash)

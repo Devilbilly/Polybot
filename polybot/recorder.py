@@ -52,6 +52,20 @@ def winner_from_last(ws_bid: float) -> Optional[str]:
     return "YES" if ws_bid > 0.5 else "NO"
 
 
+def winner_from_recent(recent_bids) -> Optional[str]:
+    """Paper-trading settlement proxy kept CONSISTENT with the backtest's determine_winner:
+    median of the last up-to-5 valid bids > 0.5 (not a single possibly-blipped last tick).
+    Real live settlement is the on-chain oracle; this proxy exists only so live PAPER P&L is
+    comparable to the validated backtest. Unlike determine_winner it always returns a side
+    (the live loop must settle a position it already holds) — the 0.15-0.85 'unresolved'
+    rejection is a backtest data-cleaning step, not a settlement rule."""
+    import numpy as np
+    vals = [float(b) for b in recent_bids if b is not None and b > 0][-5:]
+    if not vals:
+        return None
+    return "YES" if float(np.median(vals)) > 0.5 else "NO"
+
+
 # ----------------------------- async I/O loop -----------------------------
 async def _get_json(session, url, timeout=5):
     import aiohttp
@@ -96,7 +110,7 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
             if not token or token in done:
                 await asyncio.sleep(2); continue
             seq = 0
-            last_wb = 0.0          # last valid YES bid (avoids unbound var on the final write)
+            recent_bids = []       # last valid YES bids -> median winner proxy (matches backtest)
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
@@ -116,15 +130,15 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
                             wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
                             if wb <= 0 or wa <= 0:
                                 continue
-                            last_wb = wb
+                            recent_bids.append(wb)
                             db.insert_tick(token, seq, build_tick_row(rem, wb, wa, book)); seq += 1
             except Exception:
                 await asyncio.sleep(2)
             finally:
-                # finalize the market record even on disconnect; winner from last valid bid
+                # finalize the market record even on disconnect; winner = median-of-recent proxy
                 if seq > 0:
                     db.upsert_market(token, slug=slug, token_id=token, end_ts=end_ts,
-                                     winner=winner_from_last(last_wb), n_ticks=seq)
+                                     winner=winner_from_recent(recent_bids), n_ticks=seq)
                     done.add(token)
 
 
