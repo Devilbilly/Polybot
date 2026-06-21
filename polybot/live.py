@@ -57,9 +57,17 @@ async def run(config_path: str = "polybot/portfolio.json",
 
     async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
                                      connector=aiohttp.TCPConnector(ssl=False)) as session:
+        try:
+            from .binance import fetch_spot
+        except Exception:
+            fetch_spot = None
+        done = set()          # tokens already settled this session -> never re-trade/double-count
         while True:
+            now = int(time.time())
             slug = None
-            for cand in predicted_slugs(int(time.time())):
+            for cand in predicted_slugs(now):
+                if int(cand.split("-")[-1]) > now:        # skip not-yet-STARTED future windows
+                    continue
                 d = await _get_json(session, GAMMA_API.format(cand))
                 if d and len(d) > 0 and not d[0].get("closed"):
                     slug = cand; break
@@ -75,23 +83,19 @@ async def run(config_path: str = "polybot/portfolio.json",
                     except Exception: ids = []
                 if ids:
                     token = ids[0]; break
-            if not token:
+            if not token or token in done:                # already traded/settled -> skip
                 await asyncio.sleep(2); continue
             pf.new_market()
             last_bid = None
             strike = 0.0          # BTC spot at window open (set on first tick)
             try:
-                from .binance import fetch_spot
-            except Exception:
-                fetch_spot = None
-            try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
-                    while True:
-                        rem = end_ts - time.time()
-                        if rem <= 0:
-                            break
-                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+                    while end_ts - time.time() > 0:
+                        try:
+                            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+                        except asyncio.TimeoutError:
+                            continue
                         book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
                         spot = 0.0
                         if fetch_spot is not None:
@@ -101,6 +105,9 @@ async def run(config_path: str = "polybot/portfolio.json",
                                     strike = spot            # window-open price = strike
                             except Exception:
                                 spot = 0.0
+                        rem = end_ts - time.time()           # re-sample AFTER blocking I/O (recv+REST)
+                        if rem <= 0:
+                            break
                         for it in (msg if isinstance(msg, list) else [msg]):
                             if it.get("event_type") not in ("price_change", "best_bid_ask"):
                                 continue
@@ -108,14 +115,18 @@ async def run(config_path: str = "polybot/portfolio.json",
                             if wb <= 0 or wa <= 0:
                                 continue
                             pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); last_bid = wb
+            except Exception as e:
+                log.info("[LIVE] reconnect: %s", e)
+                await asyncio.sleep(2)
+            finally:
+                # ALWAYS settle a traded market (even on exception) so the open position is never
+                # leaked into the next market's new_market() reset; mark done to avoid re-trading.
                 if last_bid is not None:
                     res = pf.settle(winner_from_last(last_bid) == "YES")
                     db.log_round(session_id, res, market_id=token, ts=int(time.time()))
                     log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",
                              res.round_no, res.winner, res.total_pnl, res.total_cash)
-            except Exception as e:
-                log.info("[LIVE] reconnect: %s", e)
-                await asyncio.sleep(2)
+                    done.add(token)
 
 
 if __name__ == "__main__":  # pragma: no cover

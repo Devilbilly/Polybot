@@ -71,9 +71,13 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
     ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
     async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
                                      connector=aiohttp.TCPConnector(ssl=False)) as session:
+        done = set()
         while True:
+            now = int(time.time())
             slug = None
-            for cand in predicted_slugs(int(time.time())):
+            for cand in predicted_slugs(now):
+                if int(cand.split("-")[-1]) > now:        # skip not-yet-started future windows
+                    continue
                 data = await _get_json(session, GAMMA_API.format(cand))
                 if data and len(data) > 0 and not data[0].get("closed"):
                     slug = cand; break
@@ -89,30 +93,39 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
                     except Exception: ids = []
                 if ids:
                     token = ids[0]; break
-            if not token:
+            if not token or token in done:
                 await asyncio.sleep(2); continue
             seq = 0
+            last_wb = 0.0          # last valid YES bid (avoids unbound var on the final write)
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
-                    while True:
-                        rem = end_ts - time.time()
-                        if rem <= 0:
-                            break
-                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+                    while end_ts - time.time() > 0:
+                        try:
+                            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+                        except asyncio.TimeoutError:
+                            continue
                         items = msg if isinstance(msg, list) else [msg]
                         book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
+                        rem = end_ts - time.time()           # re-sample after blocking I/O
+                        if rem <= 0:
+                            break
                         for it in items:
                             if it.get("event_type") not in ("price_change", "best_bid_ask"):
                                 continue
                             wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
                             if wb <= 0 or wa <= 0:
                                 continue
+                            last_wb = wb
                             db.insert_tick(token, seq, build_tick_row(rem, wb, wa, book)); seq += 1
-                db.upsert_market(token, slug=slug, token_id=token, end_ts=end_ts,
-                                 winner=winner_from_last(wb), n_ticks=seq)
             except Exception:
                 await asyncio.sleep(2)
+            finally:
+                # finalize the market record even on disconnect; winner from last valid bid
+                if seq > 0:
+                    db.upsert_market(token, slug=slug, token_id=token, end_ts=end_ts,
+                                     winner=winner_from_last(last_wb), n_ticks=seq)
+                    done.add(token)
 
 
 if __name__ == "__main__":  # pragma: no cover
