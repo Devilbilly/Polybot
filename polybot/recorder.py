@@ -52,6 +52,27 @@ def winner_from_last(ws_bid: float) -> Optional[str]:
     return "YES" if ws_bid > 0.5 else "NO"
 
 
+def extract_token(ev) -> Optional[str]:
+    """First CLOB token id from a gamma-api event payload. `clobTokenIds` comes back as either a
+    JSON STRING or a list (Polymarket returns both shapes), so handle both; returns None if the
+    payload is absent / wrong-shaped / has no token. Shared by live.py and recorder.py so the two
+    can't drift."""
+    if not ev or not isinstance(ev, (list, tuple)) or not isinstance(ev[0], dict):
+        return None
+    for m in ev[0].get("markets", []):
+        if not isinstance(m, dict):
+            continue
+        ids = m.get("clobTokenIds")
+        if isinstance(ids, str):
+            try:
+                ids = json.loads(ids)
+            except Exception:
+                ids = []
+        if ids:
+            return ids[0]
+    return None
+
+
 def winner_from_recent(recent_bids) -> Optional[str]:
     """Paper-trading settlement proxy kept CONSISTENT with the backtest's determine_winner:
     median of the last up-to-5 valid bids > 0.5 (not a single possibly-blipped last tick).
@@ -99,14 +120,7 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
                 await asyncio.sleep(2); continue
             end_ts = int(slug.split("-")[-1]) + WINDOW_SEC
             ev = await _get_json(session, GAMMA_API.format(slug))
-            token = None
-            for m in (ev[0].get("markets", []) if ev else []):
-                ids = m.get("clobTokenIds")
-                if isinstance(ids, str):
-                    try: ids = json.loads(ids)
-                    except Exception: ids = []
-                if ids:
-                    token = ids[0]; break
+            token = extract_token(ev)
             if not token or token in done:
                 await asyncio.sleep(2); continue
             seq = 0

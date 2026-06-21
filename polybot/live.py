@@ -11,7 +11,7 @@ from typing import Optional
 
 from .core import Tick, Portfolio, ExecutionEngine, RiskGovernor
 from .strategies import get_strategy
-from .recorder import (predicted_slugs, parse_book, winner_from_recent,
+from .recorder import (predicted_slugs, parse_book, winner_from_recent, extract_token,
                        WS_URI, GAMMA_API, CLOB_BOOK, WINDOW_SEC, _get_json)
 
 
@@ -144,14 +144,7 @@ async def run(config_path: str = "polybot/portfolio.json",
                 await asyncio.sleep(2); continue
             end_ts = int(slug.split("-")[-1]) + WINDOW_SEC
             ev = await _get_json(session, GAMMA_API.format(slug))
-            token = None
-            for m in (ev[0].get("markets", []) if ev else []):
-                ids = m.get("clobTokenIds")
-                if isinstance(ids, str):
-                    try: ids = json.loads(ids)
-                    except Exception: ids = []
-                if ids:
-                    token = ids[0]; break
+            token = extract_token(ev)
             if not token or token in done:                # already traded/settled -> skip
                 await asyncio.sleep(2); continue
             pf.new_market()

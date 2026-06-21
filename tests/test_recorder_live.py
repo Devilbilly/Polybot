@@ -40,6 +40,38 @@ class TestRecorderHelpers(unittest.TestCase):
         self.assertEqual(R.winner_from_last(0.1), "NO")
         self.assertIsNone(R.winner_from_last(0.0))
 
+    def test_winner_from_recent_median(self):
+        self.assertEqual(R.winner_from_recent([0.9, 0.92, 0.95, 0.96, 0.94]), "YES")
+        self.assertEqual(R.winner_from_recent([0.1, 0.08, 0.05]), "NO")
+        self.assertEqual(R.winner_from_recent([0.95, 0.96, 0.97, 0.98, 0.02]), "YES")  # blip ignored
+        self.assertIsNone(R.winner_from_recent([]))
+
+    def test_extract_token_clobtokenids_as_json_string(self):
+        # Polymarket commonly returns clobTokenIds as a JSON-encoded STRING
+        ev = [{"markets": [{"clobTokenIds": '["TOKEN_YES", "TOKEN_NO"]'}]}]
+        self.assertEqual(R.extract_token(ev), "TOKEN_YES")
+
+    def test_extract_token_clobtokenids_as_list(self):
+        ev = [{"markets": [{"clobTokenIds": ["TKA", "TKB"]}]}]
+        self.assertEqual(R.extract_token(ev), "TKA")
+
+    def test_extract_token_skips_market_without_ids_then_finds_next(self):
+        ev = [{"markets": [{"foo": 1}, {"clobTokenIds": ["TK2"]}]}]
+        self.assertEqual(R.extract_token(ev), "TK2")
+
+    def test_extract_token_handles_missing_malformed_payloads(self):
+        self.assertIsNone(R.extract_token(None))
+        self.assertIsNone(R.extract_token([]))
+        self.assertIsNone(R.extract_token([{"markets": []}]))
+        self.assertIsNone(R.extract_token([{"markets": [{"clobTokenIds": ""}]}]))   # empty string
+        self.assertIsNone(R.extract_token([{"markets": [{"clobTokenIds": "not-json"}]}]))
+        self.assertIsNone(R.extract_token([{"no_markets_key": 1}]))
+        self.assertIsNone(R.extract_token([42]))                                     # ev[0] not a dict
+
+    def test_extract_token_is_shared_by_live(self):
+        # live.py must import the SAME helper (no drift between the two loops)
+        self.assertIs(LV.extract_token, R.extract_token)
+
 
 class TestLiveHelpers(unittest.TestCase):
     def test_build_portfolio_unique_ids(self):
