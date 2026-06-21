@@ -146,6 +146,19 @@ class TestRiskGovernor(unittest.TestCase):
         self.assertTrue(r.allow_entries(970.0, 970.0))    # -3% ok
         self.assertFalse(r.allow_entries(940.0, 940.0))   # -6% > 5% blocks
 
+    def test_size_multiplier_continuous(self):
+        r = RiskGovernor(1000.0, kill_switch_dd=0.25, soft_dd=0.10)
+        r.peak = 1000.0
+        self.assertEqual(r.size_multiplier(1000.0), 1.0)        # no drawdown -> full
+        self.assertEqual(r.size_multiplier(900.0), 1.0)         # 10% dd = soft -> still full
+        self.assertAlmostEqual(r.size_multiplier(825.0), 0.5)   # 17.5% dd -> halfway to kill
+        self.assertEqual(r.size_multiplier(750.0), 0.0)         # 25% dd = kill -> 0
+
+    def test_size_multiplier_binary_by_default(self):
+        r = RiskGovernor(1000.0, kill_switch_dd=0.25)           # soft_dd defaults to kill
+        r.peak = 1000.0
+        self.assertEqual(r.size_multiplier(800.0), 1.0)         # 20% dd, still full (no early scaling)
+
 
 class TestPortfolio(unittest.TestCase):
     def _pf(self):

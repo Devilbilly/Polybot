@@ -176,15 +176,30 @@ class Strategy(ABC):
 class RiskGovernor:
     """Blocks NEW ENTRIES under three sticky/transient conditions; exits always allowed."""
     def __init__(self, initial_capital: float, kill_switch_dd=0.25, round_loss_limit=0.08,
-                 min_capital=50.0):
+                 min_capital=50.0, soft_dd=None):
         self.initial_capital = initial_capital
         self.kill_switch_dd = kill_switch_dd
         self.round_loss_limit = round_loss_limit
         self.min_capital = min_capital
+        # soft_dd: drawdown at which bet sizing starts shrinking linearly toward 0 at kill_switch_dd.
+        # Default = kill_switch_dd -> no gradual de-risking (binary, backward compatible).
+        self.soft_dd = kill_switch_dd if soft_dd is None else soft_dd
         self.peak = initial_capital
         self.killed = False
         self.halted = False
         self.round_start_equity = initial_capital
+
+    def size_multiplier(self, equity: float) -> float:
+        """Continuous de-risking: 1.0 until drawdown reaches soft_dd, then linearly down to 0
+        at kill_switch_dd. Smooths the binary kill-switch and trims the drawdown tail."""
+        if self.peak <= 0 or self.soft_dd >= self.kill_switch_dd:
+            return 1.0
+        dd = (self.peak - equity) / self.peak
+        if dd <= self.soft_dd:
+            return 1.0
+        if dd >= self.kill_switch_dd:
+            return 0.0
+        return 1.0 - (dd - self.soft_dd) / (self.kill_switch_dd - self.soft_dd)
 
     def new_market(self, equity: float):
         self.round_start_equity = equity
@@ -248,11 +263,15 @@ class Portfolio:
                 f"time_progress went backward ({tick.time_progress:.4f} < {self._last_tp:.4f}); "
                 f"future/out-of-order data")
         self._last_tp = tick.time_progress
-        allow = self.risk.allow_entries(self.equity(tick), self.total_cash())
+        equity = self.equity(tick)
+        allow = self.risk.allow_entries(equity, self.total_cash())
+        scale = self.risk.size_multiplier(equity) if allow else 0.0
         for strat, pos in zip(self.strategies, self.accounts):
             for order in strat.decide(tick, pos):
-                if order.kind == "BUY" and not allow:
-                    continue
+                if order.kind == "BUY":
+                    if scale <= 0.0:
+                        continue
+                    order.usd *= scale            # continuous de-risking near the drawdown limit
                 self.engine.execute(order, tick, pos)
 
     def settle(self, winner_yes: bool) -> RoundResult:
