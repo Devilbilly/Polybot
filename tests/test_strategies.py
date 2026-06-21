@@ -186,6 +186,31 @@ class TestBtcSpotDivergence(unittest.TestCase):
         orders = s.decide(self._tick(0.55, 0.56, spot=100000, tp=0.5), p)
         self.assertTrue(any(o.side == "YES" and o.kind == "SELL" for o in orders))
 
+    def test_adaptive_vol_tracks_true_vol(self):
+        import random, math
+        s = S.BtcSpotDivergence("t", {"vol": 0.0006, "vol_window": 60})
+        rng = random.Random(0); spot = 100000.0
+        for _ in range(80):
+            spot *= math.exp(0.0012 * rng.gauss(0, 1))
+            s.decide(self._tick(0.50, 0.51, spot=spot, tp=0.5), Position(cash=1000))
+        self.assertAlmostEqual(s._effective_vol(), 0.0012, delta=0.0005)   # estimated ~ true
+
+    def test_fixed_vol_when_window_zero(self):
+        s = S.BtcSpotDivergence("t", {"vol": 0.0006, "vol_window": 0})
+        s.decide(self._tick(0.50, 0.51, spot=100500, tp=0.5), Position(cash=1000))
+        self.assertEqual(s._effective_vol(), 0.0006)
+
+    def test_adaptive_falls_back_until_window_fills(self):
+        s = S.BtcSpotDivergence("t", {"vol": 0.0006, "vol_window": 60})
+        s.decide(self._tick(0.50, 0.51, spot=100500, tp=0.5), Position(cash=1000))
+        self.assertEqual(s._effective_vol(), 0.0006)   # only 1 spot -> fallback
+
+    def test_reset_clears_spot_history(self):
+        s = S.BtcSpotDivergence("t", {"vol": 0.0006, "vol_window": 60})
+        s.decide(self._tick(0.50, 0.51, spot=100500, tp=0.5), Position(cash=1000))
+        s.reset()
+        self.assertEqual(len(s._spots), 0)
+
     def test_convergence_exit_holds_while_diverged(self):
         # market still far below the model -> do NOT exit yet
         s = S.BtcSpotDivergence("e", {"vol": 0.0006, "edge": 0.05, "exit_edge": 0.02,

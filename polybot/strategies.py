@@ -6,6 +6,7 @@ Select strategies by name in a portfolio config — no engine changes needed.
 from __future__ import annotations
 from collections import deque
 from typing import List
+import numpy as np
 from .core import Strategy, Order, Tick, Position
 
 _REGISTRY = {}
@@ -157,20 +158,39 @@ class BtcSpotDivergence(Strategy):
     data vs a real spot feed. Default exit_edge=0."""
     def __init__(self, name, params):
         super().__init__(name, params)
-        self.vol = params.get("vol", 0.0005)        # per-sqrt-second BTC log-vol
+        self.vol = params.get("vol", 0.0005)        # per-sqrt-second BTC log-vol (fallback / fixed)
+        self.vol_window = params.get("vol_window", 0)  # 0 = fixed vol; >0 = estimate from recent spot
         self.edge = params.get("edge", 0.05)        # required model-vs-market gap to enter
         self.exit_edge = params.get("exit_edge", 0.0)  # exit once market catches up to within this
         self.window = params.get("window", 300)
         self.start = params.get("time_cutoff", 0.0)
         self.max_buy = params.get("max_buy", 1)
         self.bullet_pct = params.get("bullet_pct", 0.02)
+        self._spots = deque(maxlen=max(2, self.vol_window + 1))
+
+    def reset(self):
+        self._spots.clear()
+
+    def _effective_vol(self) -> float:
+        """Live-realistic vol: estimate per-tick log-return std from recent spot when adaptive,
+        else use the fixed `vol`. Falls back to fixed until the window fills."""
+        if self.vol_window <= 0 or len(self._spots) < self.vol_window:
+            return self.vol
+        s = np.asarray(self._spots)
+        s = s[s > 0]
+        if len(s) < 2:
+            return self.vol
+        v = float(np.std(np.diff(np.log(s))))
+        return v if v > 1e-9 else self.vol
 
     def decide(self, tick: Tick, pos: Position) -> List[Order]:
         if tick.spot <= 0.0 or tick.strike <= 0.0:           # no spot feed -> idle
             return []
         from .btc_model import prob_up
+        self._spots.append(tick.spot)
+        vol = self._effective_vol()
         secs_left = max(0.0, (1.0 - tick.time_progress) * self.window)
-        p = prob_up(tick.spot, tick.strike, secs_left, self.vol)
+        p = prob_up(tick.spot, tick.strike, secs_left, vol)
         orders: List[Order] = []
         # Convergence exit: take profit when the market has caught up to the model.
         if self.exit_edge > 0.0:
