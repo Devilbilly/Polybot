@@ -97,6 +97,30 @@ class TestExecutionEngine(unittest.TestCase):
         eng.execute(Order("YES", "BUY", 500.0), tick(ap1=0.80, as1=5.0), p)
         self.assertGreater(p.inv_yes, 100)   # ignores tiny book size
 
+    def _deep_tick(self):
+        return Tick(ts="t", time_progress=0.6, ws_bid=0.79, ws_ask=0.80,
+                    bid_p=(0.79, 0, 0), bid_s=(0, 0, 0),
+                    ask_p=(0.80, 0.82, 0.84), ask_s=(10, 10, 10))
+
+    def test_walk_book_consumes_deeper_levels(self):
+        eng = ExecutionEngine(fee=0.0, slippage=0.0, walk_book=True)
+        p = Position(cash=10000.0)
+        eng.execute(Order("YES", "BUY", 100.0), self._deep_tick(), p)  # > L1 size
+        self.assertAlmostEqual(p.inv_yes, 30.0)        # walked L1+L2+L3 (10 each)
+
+    def test_no_walk_book_l1_only(self):
+        eng = ExecutionEngine(fee=0.0, slippage=0.0, walk_book=False)
+        p = Position(cash=10000.0)
+        eng.execute(Order("YES", "BUY", 100.0), self._deep_tick(), p)
+        self.assertAlmostEqual(p.inv_yes, 10.0)        # only L1 consumed
+
+    def test_walk_book_worse_average_price(self):
+        eng = ExecutionEngine(fee=0.0, slippage=0.0, walk_book=True)
+        p = Position(cash=10000.0)
+        eng.execute(Order("YES", "BUY", 100.0), self._deep_tick(), p)
+        avg = (10000.0 - p.cash) / p.inv_yes
+        self.assertGreater(avg, 0.80)                  # paid worse than L1 price
+
 
 class TestRiskGovernor(unittest.TestCase):
     def test_normal_allows(self):

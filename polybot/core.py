@@ -80,11 +80,15 @@ class Order:
 
 # ----------------------------- execution -----------------------------
 class ExecutionEngine:
-    """Applies fills identically for backtest and live. Caps buys by resting book size."""
-    def __init__(self, fee: float = 0.001, slippage: float = 0.002, cap_fills: bool = True):
+    """Applies fills identically for backtest and live. Caps buys by resting book size and
+    (when walk_book) consumes deeper L2/L3 levels at worse prices for size beyond L1 — so
+    large bets at a compounded bankroll pay a realistic, worse average price."""
+    def __init__(self, fee: float = 0.001, slippage: float = 0.002, cap_fills: bool = True,
+                 walk_book: bool = True):
         self.fee = fee
         self.slippage = slippage
         self.cap_fills = cap_fills
+        self.walk_book = walk_book
 
     def execute(self, order: Order, tick: Tick, pos: Position) -> bool:
         if order.kind == "BUY":
@@ -92,27 +96,39 @@ class ExecutionEngine:
         return self._sell(order, tick, pos)
 
     def _buy(self, order, tick, pos) -> bool:
+        # Price/size ladder for the chosen side (NO ask at level k = 1 - bid_p[k]).
         if order.side == "YES":
-            price, avail = tick.ap1, tick.as1
+            levels = [(tick.ask_p[k], tick.ask_s[k]) for k in range(3)]
         else:
-            price, avail = tick.no_ask, tick.bs1     # buying NO consumes YES bids
-        if price <= 0.0 or price >= 1.0 or avail <= 0.0:
+            levels = [(1.0 - tick.bid_p[k], tick.bid_s[k]) for k in range(3)]
+        budget = min(order.usd, pos.cash)
+        total_tokens = 0.0
+        total_cost = 0.0
+        for li, (price, size) in enumerate(levels):
+            if li > 0 and not self.walk_book:
+                break                                  # L1-only mode
+            if price <= 0.0 or price >= 1.0 or size <= 0.0:
+                continue
+            remaining = budget - total_cost
+            if remaining <= 0.0:
+                break
+            exec_p = min(0.9999, price + self.slippage)
+            want = remaining / (exec_p * (1.0 + self.fee))
+            take = min(want, size) if self.cap_fills else want
+            if take <= 0.0:
+                continue
+            total_tokens += take
+            total_cost += take * exec_p * (1.0 + self.fee)
+            if not self.cap_fills:
+                break                                  # uncapped: took it all at L1
+        if total_tokens < 1.0 or total_cost > pos.cash + 1e-9:
             return False
-        exec_p = min(0.9999, price + self.slippage)
-        want = order.usd / (exec_p * (1.0 + self.fee))
-        affordable = pos.cash / (exec_p * (1.0 + self.fee))
-        tokens = min(want, affordable)
-        if self.cap_fills:
-            tokens = min(tokens, avail)
-        if tokens < 1.0:
-            return False
-        cost = tokens * exec_p * (1.0 + self.fee)
-        pos.cash -= cost
+        pos.cash -= total_cost
         pos.n_entries += 1
         if order.side == "YES":
-            pos.inv_yes += tokens; pos.yes_bought += tokens
+            pos.inv_yes += total_tokens; pos.yes_bought += total_tokens
         else:
-            pos.inv_no += tokens; pos.no_bought += tokens
+            pos.inv_no += total_tokens; pos.no_bought += total_tokens
         return True
 
     def _sell(self, order, tick, pos) -> bool:

@@ -4,6 +4,7 @@ Add a strategy by subclassing Strategy and decorating with @register("name").
 Select strategies by name in a portfolio config — no engine changes needed.
 """
 from __future__ import annotations
+from collections import deque
 from typing import List
 from .core import Strategy, Order, Tick, Position
 
@@ -84,7 +85,7 @@ class MomentumFavorite(FavConvergence):
         super().__init__(name, params)
         self.lookback = params.get("lookback", 30)
         self.min_rise = params.get("min_rise", 0.0)
-        self._hist = __import__("collections").deque(maxlen=self.lookback + 1)
+        self._hist = deque(maxlen=self.lookback + 1)
 
     def reset(self):
         self._hist.clear()
