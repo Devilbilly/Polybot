@@ -31,6 +31,10 @@ sizing/momentum/compounding machinery):
 - Caveat: t-test assumes market independence; regime clustering would shrink effective-n, but the
   bias is *direction-agnostic* (favorites underpriced, not BTC trend), so clustering shifts *which*
   side is favorite, not the bias magnitude.
+- **Symmetry check (strengthens the above):** favorite side split ~50/50 (927 up / 933 down) →
+  collection period was regime-balanced (no dominant trend → significance not trend-inflated). Bias
+  present on BOTH sides (up +2.7pp p=0.02; down +3.5pp p=0.004) with NO significant difference
+  (t=−0.43, p=0.67) → structural/behavioural, not a one-sided trend artifact. No directional tilt.
 
 ## [1] Favorite edge — the real, backtest-validated edge (1861 real markets)
 - OOS paper trade (holdout) : **ROI +225%**, max DD 2.3%, win 68%  *(report.py holdout; the 70/30 split above gives +617% at 2.5%)*
