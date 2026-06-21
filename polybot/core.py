@@ -12,6 +12,10 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 
+class LookaheadError(Exception):
+    """Raised when future data would be used (time goes backward within a market)."""
+
+
 # ----------------------------- market state -----------------------------
 @dataclass
 class Tick:
@@ -195,12 +199,14 @@ class Portfolio:
     """Runs N strategies on shared ticks via one ExecutionEngine + RiskGovernor."""
     def __init__(self, strategies: List[Strategy], weights: List[float],
                  total_capital: float = 1000.0, engine: Optional[ExecutionEngine] = None,
-                 risk: Optional[RiskGovernor] = None):
+                 risk: Optional[RiskGovernor] = None, strict_time: bool = True):
         self.strategies = strategies
         self.engine = engine or ExecutionEngine()
         self.risk = risk or RiskGovernor(total_capital)
         self.accounts = [Position(cash=total_capital * w) for w in weights]
         self.round_no = 0
+        self.strict_time = strict_time   # gate: forbid feeding non-chronological (future) ticks
+        self._last_tp = -1.0
 
     def total_cash(self) -> float:
         return sum(a.cash for a in self.accounts)
@@ -214,8 +220,16 @@ class Portfolio:
         for a in self.accounts:
             a.reset_market()
         self.risk.new_market(self.total_cash())
+        self._last_tp = -1.0
 
     def process_tick(self, tick: Tick):
+        # Look-ahead gate: time must move forward. A backward jump means future/out-of-order
+        # data is being fed (e.g. the old i/total_ticks bug) -> refuse rather than cheat.
+        if self.strict_time and tick.time_progress + 1e-9 < self._last_tp:
+            raise LookaheadError(
+                f"time_progress went backward ({tick.time_progress:.4f} < {self._last_tp:.4f}); "
+                f"future/out-of-order data")
+        self._last_tp = tick.time_progress
         allow = self.risk.allow_entries(self.equity(tick), self.total_cash())
         for strat, pos in zip(self.strategies, self.accounts):
             for order in strat.decide(tick, pos):

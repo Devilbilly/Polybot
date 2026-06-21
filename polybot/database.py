@@ -75,6 +75,17 @@ def csv_to_arrays(path: str) -> Optional[Dict[str, np.ndarray]]:
                      ("bid_p3", "Bid_P3"), ("bid_s3", "Bid_S3"), ("ask_p3", "Ask_P3"), ("ask_s3", "Ask_S3")]:
         out[lvl] = (df[src].values.astype(np.float64) if src in df.columns
                     else np.zeros(len(df), dtype=np.float64))
+    # Keep only the FIRST contiguous window: recorded `rem` is non-increasing within a market;
+    # a jump UP means the file concatenates a later window (old log-reconstruction artifact).
+    # Truncating here makes every market chronological -> the look-ahead time gate stays strict.
+    rem = out["rem"]
+    if len(rem) > 1 and rem[0] >= 0:
+        jumps = np.where(np.diff(rem) > 1.0)[0]
+        if len(jumps):
+            cut = int(jumps[0]) + 1
+            if cut < 50:
+                return None
+            out = {k: (v[:cut] if hasattr(v, "__len__") else v) for k, v in out.items()}
     win = determine_winner(out["ws_bid"])
     if win is None:
         return None

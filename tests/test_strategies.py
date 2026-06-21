@@ -98,6 +98,50 @@ class TestMomentumFavorite(unittest.TestCase):
         self.assertTrue(any(o.kind == "SELL" for o in orders))
 
 
+class TestScaleInFavorite(unittest.TestCase):
+    def setUp(self):
+        self.s = S.ScaleInFavorite("si", {"buy_p": 0.60, "sell_p": 0.95, "time_cutoff": 0.50,
+                                          "stop_p": 0.50, "max_buy": 3, "add_gap": 0.04,
+                                          "lookback": 3, "min_rise": 0.0})
+
+    def _run(self, seq, tp=0.6):
+        """seq: list of (bid, ap1) fed as consecutive ticks with a PERSISTENT evolving position."""
+        from polybot.core import ExecutionEngine
+        pos = Position(cash=1000.0); pos.reset_market(); eng = ExecutionEngine()
+        buys = []
+        for bid, ap1 in seq:
+            t = tick(ap1=ap1, bp1=bid, ws_bid=bid, tp=tp)
+            for o in self.s.decide(t, pos):
+                if o.kind == "BUY":
+                    buys.append(o)
+                eng.execute(o, t, pos)
+        return buys, pos
+
+    def test_scales_into_rising_favorite_same_side(self):
+        # first 4 ticks warm up the lookback(3); then enter + add as ap1 climbs past add_gap
+        seq = [(0.60, 0.78), (0.62, 0.79), (0.64, 0.80), (0.66, 0.81),
+               (0.68, 0.82), (0.70, 0.86), (0.72, 0.90), (0.74, 0.94)]
+        buys, pos = self._run(seq)
+        self.assertGreaterEqual(len(buys), 2)                 # added beyond first entry
+        self.assertTrue(all(o.side == "YES" for o in buys))   # never flipped sides
+
+    def test_respects_max_buy_cap(self):
+        seq = [(0.60 + 0.015 * i, 0.62 + 0.04 * i) for i in range(10)]  # keeps rising past 3 adds
+        buys, pos = self._run(seq)
+        self.assertLessEqual(len(buys), 3)                    # max_buy=3
+
+    def test_no_add_without_gap(self):
+        # warm up, enter once, then ap1 stays flat (< add_gap above entry) -> only one entry
+        seq = [(0.60, 0.80), (0.62, 0.80), (0.64, 0.80), (0.66, 0.80), (0.68, 0.81), (0.70, 0.82)]
+        buys, _ = self._run(seq)
+        self.assertEqual(len(buys), 1)
+
+    def test_reset_clears_commitment(self):
+        self.s._side = "YES"; self.s._last_price = 0.8
+        self.s.reset()
+        self.assertIsNone(self.s._side)
+
+
 class TestFavHoldAndNoOp(unittest.TestCase):
     def test_fav_hold_has_no_stop(self):
         s = S.FavHold("h", {"stop_p": 0.50})

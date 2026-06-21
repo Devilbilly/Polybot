@@ -1,6 +1,6 @@
 """polybot — a stable Polymarket trading engine (one engine, shared by backtest + live)."""
-from .core import Tick, Position, Order, ExecutionEngine, RiskGovernor, Portfolio
-from . import strategies, backtester, database, paper
+from .core import Tick, Position, Order, ExecutionEngine, RiskGovernor, Portfolio, LookaheadError
+from . import strategies, backtester, database, paper, validation
 
 __all__ = ["Tick", "Position", "Order", "ExecutionEngine", "RiskGovernor", "Portfolio",
-           "strategies", "backtester", "database", "paper"]
+           "LookaheadError", "strategies", "backtester", "database", "paper", "validation"]

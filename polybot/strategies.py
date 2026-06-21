@@ -102,6 +102,45 @@ class MomentumFavorite(FavConvergence):
         return orders
 
 
+@register("scale_in_favorite")
+class ScaleInFavorite(MomentumFavorite):
+    """Average INTO a strengthening favorite: commit to one side, then add (same side only,
+    no flip) each time it rises another `add_gap`, up to max_buy entries. Reversal-stop exits."""
+    def __init__(self, name, params):
+        super().__init__(name, params)
+        self.add_gap = params.get("add_gap", 0.04)
+        self._side = None
+        self._last_price = 0.0
+
+    def reset(self):
+        super().reset()
+        self._side = None
+        self._last_price = 0.0
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        self._hist.append(tick.ws_bid)
+        orders = self._reversal_stop(tick, pos)
+        if self._can_enter(tick, pos) and len(self._hist) > self.lookback:
+            rise = tick.ws_bid - self._hist[0]
+            usd = pos.cash * self.bullet_pct
+            yes_ok = self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise
+            no_ok = self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise
+            if self._side is None:                       # first commitment
+                if yes_ok:
+                    self._side, self._last_price = "YES", tick.ap1
+                    orders.append(Order("YES", "BUY", usd))
+                elif no_ok:
+                    self._side, self._last_price = "NO", tick.no_ask
+                    orders.append(Order("NO", "BUY", usd))
+            elif self._side == "YES" and yes_ok and tick.ap1 >= self._last_price + self.add_gap:
+                self._last_price = tick.ap1
+                orders.append(Order("YES", "BUY", usd))   # add to a strengthening YES
+            elif self._side == "NO" and no_ok and tick.no_ask >= self._last_price + self.add_gap:
+                self._last_price = tick.no_ask
+                orders.append(Order("NO", "BUY", usd))
+        return orders
+
+
 @register("noop")
 class NoOp(Strategy):
     """Never trades. Sanity baseline (final equity must equal start)."""

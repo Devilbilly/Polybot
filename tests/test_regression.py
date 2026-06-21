@@ -68,7 +68,8 @@ class TestRegression(unittest.TestCase):
         """Lock in the ACTUAL polybot/portfolio.json so config edits can't silently break it."""
         import json
         from polybot.paper import paper_trade
-        cfg = json.load(open(os.path.join(os.path.dirname(__file__), "..", "polybot", "portfolio.json")))
+        with open(os.path.join(os.path.dirname(__file__), "..", "polybot", "portfolio.json")) as f:
+            cfg = json.load(f)
         rep = paper_trade(self.markets, cfg)
         self.assertGreater(rep.roi_pct, 50.0, f"deployed config regressed: {rep}")
         self.assertFalse(rep.killed)
