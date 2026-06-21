@@ -20,21 +20,39 @@ def cfg(name, params):
             "engine": ENG, "risk": RISK}
 
 
-def main(n_seconds=12000):
+def _spot_roi(windows, lag):
+    import numpy as np
+    if not windows:
+        return float("nan")
+    v = float(np.median([B.estimate_vol(w) for w in windows]))
+    mk = [market_from_path(w, vol=v, lag=lag, spread=0.01) for w in windows]
+    return bt.run_parallel(mk, cfg("btc_spot_divergence",
+                                   {"vol": v, "edge": 0.04, "window": 300, "time_cutoff": 0.0, "max_buy": 1})).roi_pct
+
+
+def main(n_seconds=36000):
+    import numpy as np
     print(f"[*] Fetching {n_seconds} real BTCUSDT 1s closes from Binance ...")
     closes = [c for _, c in B.fetch_klines("BTCUSDT", "1s", total=n_seconds)]
-    vol = B.estimate_vol(closes)
     windows = [w for w in B.closes_to_windows(closes, 300) if len(w) == 300]
-    print(f"[*] {len(windows)} real 5-min windows | per-second vol={vol:.6f} | "
+    vols = np.array([B.estimate_vol(w) for w in windows])
+    med = float(np.median(vols))
+    print(f"[*] {len(windows)} real 5-min windows | median per-sec vol={med:.6f} | "
           f"range ${min(closes):,.0f}-${max(closes):,.0f}\n")
-    spot_p = {"vol": vol, "edge": 0.04, "window": 300, "time_cutoff": 0.0, "max_buy": 1, "bullet_pct": 0.02}
-    fav_p = {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}
-    print(f"{'lag(s)':>6} | {'spot ROI%':>10} {'win%':>6} | {'fav ROI%':>9}   (lag0 = control)")
-    for lag in (0, 2, 5, 15):
-        mk = [market_from_path(w, vol=vol, lag=lag, spread=0.01) for w in windows]
-        rs = bt.run_parallel(mk, cfg("btc_spot_divergence", spot_p))
-        rf = bt.run_parallel(mk, cfg("fav_convergence", fav_p))
-        print(f"{lag:>6} | {rs.roi_pct:>+10.1f} {rs.win_rate_pct:>5.0f}% | {rf.roi_pct:>+9.1f}")
+
+    print("=== Spot edge by market lag (lag0 = fair-test control) ===")
+    print(f"{'lag(s)':>6} | {'spot ROI%':>10}")
+    for lag in (0, 2, 5, 10):
+        print(f"{lag:>6} | {_spot_roi(windows, lag):>+10.1f}")
+
+    print("\n=== By VOLATILITY regime (deployment guidance) ===")
+    lo = [w for w, v in zip(windows, vols) if v <= med]
+    hi = [w for w, v in zip(windows, vols) if v > med]
+    print(f"{'regime':16s} {'n':>4} | {'lag5 ROI%':>9} {'lag10 ROI%':>10}")
+    for label, ws in [("LOW vol (calm)", lo), ("HIGH vol (choppy)", hi)]:
+        print(f"{label:16s} {len(ws):>4} | {_spot_roi(ws, 5):>+8.0f} {_spot_roi(ws, 10):>+9.0f}")
+    print("\n[note] spot edge is stronger in CALM regimes (less reversal -> spot lead more "
+          "predictive); sample regimes are mild, true high-vol untested until live.")
 
 
 if __name__ == "__main__":
