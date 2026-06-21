@@ -64,6 +64,23 @@ class TestRegression(unittest.TestCase):
         self.assertLess(with_stop.max_dd_pct, no_stop.max_dd_pct,
                         f"stop should cut DD: stop={with_stop.max_dd_pct:.1f} hold={no_stop.max_dd_pct:.1f}")
 
+    def test_deployed_config_profitable(self):
+        """Lock in the ACTUAL polybot/portfolio.json so config edits can't silently break it."""
+        import json
+        from polybot.paper import paper_trade
+        cfg = json.load(open(os.path.join(os.path.dirname(__file__), "..", "polybot", "portfolio.json")))
+        rep = paper_trade(self.markets, cfg)
+        self.assertGreater(rep.roi_pct, 50.0, f"deployed config regressed: {rep}")
+        self.assertFalse(rep.killed)
+
+    def test_paper_session_profitable(self):
+        """The stateful paper trader (realistic fills) must be strongly profitable + survive."""
+        from polybot.paper import paper_trade
+        rep = paper_trade(self.markets, FAV_CFG)
+        self.assertGreater(rep.roi_pct, 50.0, f"paper session regressed: {rep}")
+        self.assertLess(rep.max_dd_pct, 25.0)
+        self.assertFalse(rep.killed)
+
     def test_favorites_beat_longshots(self):
         """Core invariant of the edge: buying favorites must beat buying longshots."""
         longshot = {"strategies": [{"id": "ls", "name": "fav_convergence", "weight": 1.0,

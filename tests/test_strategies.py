@@ -65,6 +65,39 @@ class TestFavConvergence(unittest.TestCase):
         self.assertFalse(any(o.kind == "SELL" for o in orders))
 
 
+class TestMomentumFavorite(unittest.TestCase):
+    def setUp(self):
+        self.s = S.MomentumFavorite("mf", {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50,
+                                           "stop_p": 0.50, "max_buy": 1, "lookback": 5, "min_rise": 0.02})
+
+    def _feed(self, prices, ap1=0.85, tp=0.6):
+        """Feed a rising/falling bid history, return orders on the final tick."""
+        orders = []
+        for i, b in enumerate(prices):
+            orders = self.s.decide(tick(ap1=ap1, bp1=b, ws_bid=b, tp=tp), Position(cash=1000))
+        return orders
+
+    def test_buys_rising_favorite(self):
+        # bid rises 0.78->0.86 over the window; YES ask 0.85 in band -> BUY
+        orders = self._feed([0.78, 0.80, 0.82, 0.84, 0.85, 0.86], ap1=0.85)
+        self.assertTrue(any(o.side == "YES" and o.kind == "BUY" for o in orders))
+
+    def test_skips_falling_favorite(self):
+        # bid falls 0.92->0.85 (drifting DOWN into band) -> no entry despite being in band
+        orders = self._feed([0.92, 0.91, 0.89, 0.87, 0.86, 0.85], ap1=0.85)
+        self.assertFalse(any(o.kind == "BUY" for o in orders))
+
+    def test_reset_clears_history(self):
+        self.s._hist.append(0.5)
+        self.s.reset()
+        self.assertEqual(len(self.s._hist), 0)
+
+    def test_inherits_reversal_stop(self):
+        self.s._hist.extend([0.8] * 6)
+        orders = self.s.decide(tick(ws_bid=0.40, ap1=0.85, tp=0.8), Position(cash=0, inv_yes=100))
+        self.assertTrue(any(o.kind == "SELL" for o in orders))
+
+
 class TestFavHoldAndNoOp(unittest.TestCase):
     def test_fav_hold_has_no_stop(self):
         s = S.FavHold("h", {"stop_p": 0.50})

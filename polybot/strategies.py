@@ -44,16 +44,22 @@ class FavConvergence(Strategy):
         self.max_entries = params.get("max_buy", 1)
         self.bullet_pct = params.get("bullet_pct", 0.02)
 
-    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+    def _reversal_stop(self, tick: Tick, pos: Position) -> List[Order]:
+        """Exit a held side if it reversed below stop_p (no longer the favorite)."""
         orders: List[Order] = []
-        # Reversal stop (any time we hold) — exits are never blocked by single-entry cap.
         if self.stop > 0.0:
             if pos.inv_yes >= 1.0 and tick.ws_bid < self.stop:
                 orders.append(Order("YES", "SELL"))
             if pos.inv_no >= 1.0 and (1.0 - tick.ws_ask) < self.stop:
                 orders.append(Order("NO", "SELL"))
-        # Single entry per market, late window, favorite in band.
-        if tick.time_progress >= self.start and pos.n_entries < self.max_entries:
+        return orders
+
+    def _can_enter(self, tick: Tick, pos: Position) -> bool:
+        return tick.time_progress >= self.start and pos.n_entries < self.max_entries
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        orders = self._reversal_stop(tick, pos)
+        if self._can_enter(tick, pos):
             usd = pos.cash * self.bullet_pct
             if self.lo <= tick.ap1 <= self.hi:
                 orders.append(Order("YES", "BUY", usd))
@@ -68,6 +74,32 @@ class FavHold(FavConvergence):
     def __init__(self, name, params):
         params = {**params, "stop_p": 0.0}
         super().__init__(name, params)
+
+
+@register("momentum_favorite")
+class MomentumFavorite(FavConvergence):
+    """FavConvergence, but only enter a favorite that is RISING over a lookback window
+    (confirmation that it is strengthening toward 1.0, not drifting down into the band)."""
+    def __init__(self, name, params):
+        super().__init__(name, params)
+        self.lookback = params.get("lookback", 30)
+        self.min_rise = params.get("min_rise", 0.0)
+        self._hist = __import__("collections").deque(maxlen=self.lookback + 1)
+
+    def reset(self):
+        self._hist.clear()
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        self._hist.append(tick.ws_bid)
+        orders = self._reversal_stop(tick, pos)
+        if self._can_enter(tick, pos) and len(self._hist) > self.lookback:
+            rise = tick.ws_bid - self._hist[0]          # change over the lookback window
+            usd = pos.cash * self.bullet_pct
+            if self.lo <= tick.ap1 <= self.hi and rise >= self.min_rise:
+                orders.append(Order("YES", "BUY", usd))      # YES favorite, rising
+            elif self.lo <= tick.no_ask <= self.hi and -rise >= self.min_rise:
+                orders.append(Order("NO", "BUY", usd))       # NO favorite (YES bid falling)
+        return orders
 
 
 @register("noop")

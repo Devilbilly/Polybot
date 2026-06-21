@@ -1,7 +1,7 @@
 {
     "strategies": [
-        {"id": "fav_main", "name": "fav_convergence", "weight": 0.60,
-         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}},
+        {"id": "fav_main", "name": "momentum_favorite", "weight": 0.60,
+         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02, "lookback": 50, "min_rise": 0.02}},
         {"id": "fav_late", "name": "fav_convergence", "weight": 0.40,
          "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02}}
     ],
