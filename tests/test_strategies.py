@@ -178,6 +178,22 @@ class TestBtcSpotDivergence(unittest.TestCase):
         p = Position(cash=1000, n_entries=1)
         self.assertEqual(self.s.decide(self._tick(0.59, 0.60, spot=100400), p), [])
 
+    def test_convergence_exit_sells_when_market_catches_up(self):
+        # exit-mode strategy; spot==strike -> model p~0.5; holding YES; ws_bid 0.55 >= 0.5-exit_edge -> SELL
+        s = S.BtcSpotDivergence("e", {"vol": 0.0006, "edge": 0.05, "exit_edge": 0.02,
+                                      "window": 300, "time_cutoff": 0.0, "max_buy": 1})
+        p = Position(cash=0, inv_yes=100)
+        orders = s.decide(self._tick(0.55, 0.56, spot=100000, tp=0.5), p)
+        self.assertTrue(any(o.side == "YES" and o.kind == "SELL" for o in orders))
+
+    def test_convergence_exit_holds_while_diverged(self):
+        # market still far below the model -> do NOT exit yet
+        s = S.BtcSpotDivergence("e", {"vol": 0.0006, "edge": 0.05, "exit_edge": 0.02,
+                                      "window": 300, "time_cutoff": 0.0, "max_buy": 1})
+        p = Position(cash=0, inv_yes=100)
+        orders = s.decide(self._tick(0.30, 0.31, spot=100000, tp=0.5), p)
+        self.assertFalse(any(o.kind == "SELL" for o in orders))
+
 
 class TestFavHoldAndNoOp(unittest.TestCase):
     def test_fav_hold_has_no_stop(self):
