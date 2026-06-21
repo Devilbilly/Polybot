@@ -18,10 +18,11 @@ import unittest
 import numpy as np
 
 from polybot import backtester as bt
-from polybot.core import Portfolio
-from polybot.live import live_tick, build_portfolio
+from polybot.core import Portfolio, Tick, Position
+from polybot.live import live_tick, build_portfolio, window_open_strike
 from polybot.recorder import winner_from_recent, winner_from_last
 from polybot.database import determine_winner
+from polybot.btc_model import prob_up
 from polybot.strategies import get_strategy
 from tests.helpers import make_market
 
@@ -126,6 +127,45 @@ class TestSettlementProxyParity(unittest.TestCase):
         self.assertIsNone(winner_from_recent([]))
         self.assertIsNone(winner_from_recent([0.0, 0.0]))
         self.assertEqual(winner_from_recent([0.0, 0.0, 0.7, 0.8, 0.9]), "YES")
+
+
+class TestWindowOpenStrike(unittest.TestCase):
+    def test_fetches_close_at_window_open_time(self):
+        calls = {}
+        def fake_fetch(interval="1s", total=1, end_time=None):
+            calls["interval"] = interval; calls["total"] = total; calls["end_time"] = end_time
+            return [(end_time, 100123.5)]
+        strike = window_open_strike(end_ts=1_700_000_300, fetch_klines_fn=fake_fetch, window=300)
+        self.assertEqual(strike, 100123.5)
+        # must request the OPEN time = (end_ts - window) in MILLISECONDS
+        self.assertEqual(calls["end_time"], (1_700_000_300 - 300) * 1000)
+        self.assertEqual(calls["interval"], "1s")
+
+    def test_returns_zero_on_empty_or_error(self):
+        self.assertEqual(window_open_strike(1_700_000_300, lambda **k: [], window=300), 0.0)
+        def boom(**k):
+            raise RuntimeError("network down")
+        self.assertEqual(window_open_strike(1_700_000_300, boom, window=300), 0.0)  # -> caller falls back
+
+
+class TestSpotDegradationGuards(unittest.TestCase):
+    """A Binance hiccup (spot=0 / strike=0) must NOT crash or mis-signal the live spot path."""
+    def test_prob_up_neutral_on_bad_spot_or_strike(self):
+        self.assertEqual(prob_up(0.0, 100000, 60, 0.0006), 0.5)
+        self.assertEqual(prob_up(100000, 0.0, 60, 0.0006), 0.5)
+        self.assertEqual(prob_up(-5, -5, 60, 0.0006), 0.5)
+
+    def test_spot_confirmation_degrades_to_allow_when_spot_missing(self):
+        # spot_confirmed_favorite with confirm>0 but NO spot feed must still trade the favorite
+        # (graceful degradation), not silently halt on a Binance outage.
+        s = get_strategy("spot_confirmed_favorite",
+                         {"buy_p": 0.60, "sell_p": 0.97, "time_cutoff": 0.0, "stop_p": 0.5,
+                          "max_buy": 1, "bullet_pct": 0.02, "vol": 0.0006, "window": 300, "confirm": 0.55})
+        t = Tick(ts="t", time_progress=0.6, ws_bid=0.84, ws_ask=0.85,
+                 bid_p=(0.84, 0, 0), bid_s=(1e6, 0, 0), ask_p=(0.85, 0, 0), ask_s=(1e6, 0, 0))  # spot/strike=0
+        orders = s.decide(t, Position(cash=1000))
+        self.assertTrue(any(o.kind == "BUY" for o in orders),
+                        "confirmation sleeve must trade the favorite when spot is unavailable")
 
 
 if __name__ == "__main__":

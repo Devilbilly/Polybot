@@ -27,6 +27,20 @@ def build_portfolio(cfg: dict, capital: float = 1000.0) -> Portfolio:
     return Portfolio(strats, weights, total_capital=capital, engine=engine, risk=risk)
 
 
+def window_open_strike(end_ts: int, fetch_klines_fn, window: int = WINDOW_SEC) -> float:
+    """True settlement reference for a BTC up/down window = BTC close at the window-OPEN time
+    (end_ts - window), fetched from Binance history. The live loop otherwise anchors `strike` to
+    the FIRST tick it sees — a few seconds late due to connect latency — which biases the spot
+    model's probability for the whole window. Returns 0.0 on any failure so the caller can fall
+    back to the first-tick spot. Pure w.r.t. fetch_klines_fn (injected) so it is unit-testable."""
+    try:
+        open_ms = (int(end_ts) - int(window)) * 1000
+        kl = fetch_klines_fn(interval="1s", total=1, end_time=open_ms)
+        return float(kl[-1][1]) if kl else 0.0
+    except Exception:
+        return 0.0
+
+
 def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict,
               spot: float = 0.0, strike: float = 0.0) -> Tick:
     """Assemble a core.Tick from a WS update + parsed L2 book (+ optional BTC spot/strike)."""
@@ -58,9 +72,9 @@ async def run(config_path: str = "polybot/portfolio.json",
     async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
                                      connector=aiohttp.TCPConnector(ssl=False)) as session:
         try:
-            from .binance import fetch_spot
+            from .binance import fetch_spot, fetch_klines
         except Exception:
-            fetch_spot = None
+            fetch_spot = fetch_klines = None
         done = set()          # tokens already settled this session -> never re-trade/double-count
         while True:
             now = int(time.time())
@@ -87,7 +101,9 @@ async def run(config_path: str = "polybot/portfolio.json",
                 await asyncio.sleep(2); continue
             pf.new_market()
             recent_bids = []      # last valid YES bids -> median settlement proxy (matches backtest)
-            strike = 0.0          # BTC spot at window open (set on first tick)
+            # True settlement reference = BTC at window OPEN (end_ts-300), from Binance history;
+            # fall back to the first valid tick's spot below if the historical fetch fails.
+            strike = window_open_strike(end_ts, fetch_klines) if fetch_klines is not None else 0.0
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
