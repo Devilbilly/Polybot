@@ -91,6 +91,7 @@ class BacktestResult:
     sharpe: float
     win_rate_pct: float
     per_strategy_roi: Dict[str, float] = field(default_factory=dict)
+    killed: bool = False
 
     def __str__(self):
         ps = "  ".join(f"{k}:{v:+.0f}%" for k, v in self.per_strategy_roi.items())
@@ -125,7 +126,8 @@ def _compound(fractions_per_market: List[Dict[str, float]], cfg: dict,
     return BacktestResult(
         n_markets=len(fractions_per_market), roi_pct=(final / capital - 1) * 100, final=final,
         max_dd_pct=maxdd * 100, sharpe=float(sharpe),
-        win_rate_pct=(wins / traded * 100 if traded else 0.0), per_strategy_roi=per_roi)
+        win_rate_pct=(wins / traded * 100 if traded else 0.0), per_strategy_roi=per_roi,
+        killed=killed)
 
 
 # ----------------------------- public API -----------------------------
@@ -141,17 +143,22 @@ def load_markets(source: str) -> List[Dict[str, np.ndarray]]:
     return [m for m in out if m is not None]
 
 
-def run_parallel(markets: List[Dict[str, np.ndarray]], cfg: dict,
-                 n_jobs: Optional[int] = None, capital: float = 1000.0) -> BacktestResult:
+def compute_fractions(markets: List[Dict[str, np.ndarray]], cfg: dict,
+                      n_jobs: Optional[int] = None) -> List[Dict[str, float]]:
+    """Per-market return fractions (bankroll-independent), in parallel. Order-independent —
+    reused by run_parallel and the Monte-Carlo ordering test."""
     import multiprocessing as mp
     n_jobs = n_jobs or max(1, (os.cpu_count() or 2) - 1)
     payload = [(m, cfg) for m in markets]
     if n_jobs == 1 or len(markets) < 8:
-        fractions = [_worker(p) for p in payload]
-    else:
-        with mp.Pool(n_jobs) as pool:
-            fractions = pool.map(_worker, payload)
-    return _compound(fractions, cfg, capital)
+        return [_worker(p) for p in payload]
+    with mp.Pool(n_jobs) as pool:
+        return pool.map(_worker, payload)
+
+
+def run_parallel(markets: List[Dict[str, np.ndarray]], cfg: dict,
+                 n_jobs: Optional[int] = None, capital: float = 1000.0) -> BacktestResult:
+    return _compound(compute_fractions(markets, cfg, n_jobs), cfg, capital)
 
 
 def run_sequential(markets: List[Dict[str, np.ndarray]], cfg: dict,
