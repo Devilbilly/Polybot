@@ -208,6 +208,37 @@ class BtcSpotDivergence(Strategy):
         return orders
 
 
+@register("spot_confirmed_favorite")
+class SpotConfirmedFavorite(FavConvergence):
+    """FavConvergence, but each buy is CONFIRMED by the BTC-spot model when spot is available:
+    only buy a favorite the spot model also favors. Because spot LEADS the prediction book, it
+    can veto favorites about to be upset (the favorite edge's main loss source) BEFORE entry.
+    A no-op filter on historical data lacking spot -> identical to FavConvergence there, so it
+    is safe to deploy and only adds value live."""
+    def __init__(self, name, params):
+        super().__init__(name, params)
+        self.vol = params.get("vol", 0.0006)
+        self.window = params.get("window", 300)
+        self.confirm = params.get("confirm", 0.50)   # spot model must favor the side by >= this
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        orders = self._reversal_stop(tick, pos)
+        if self._can_enter(tick, pos):
+            usd = pos.cash * self.bullet_pct
+            ok_yes = ok_no = True
+            if tick.spot > 0.0 and tick.strike > 0.0:          # spot available -> confirm
+                from .btc_model import prob_up
+                secs_left = max(0.0, (1.0 - tick.time_progress) * self.window)
+                p = prob_up(tick.spot, tick.strike, secs_left, self.vol)
+                ok_yes = p >= self.confirm
+                ok_no = (1.0 - p) >= self.confirm
+            if self.lo <= tick.ap1 <= self.hi and ok_yes:
+                orders.append(Order("YES", "BUY", usd))
+            elif self.lo <= tick.no_ask <= self.hi and ok_no:
+                orders.append(Order("NO", "BUY", usd))
+        return orders
+
+
 @register("noop")
 class NoOp(Strategy):
     """Never trades. Sanity baseline (final equity must equal start)."""

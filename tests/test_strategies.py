@@ -220,6 +220,31 @@ class TestBtcSpotDivergence(unittest.TestCase):
         self.assertFalse(any(o.kind == "SELL" for o in orders))
 
 
+class TestSpotConfirmedFavorite(unittest.TestCase):
+    def setUp(self):
+        self.s = S.SpotConfirmedFavorite("sc", {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50,
+                                               "stop_p": 0.50, "max_buy": 1, "vol": 0.0006,
+                                               "window": 300, "confirm": 0.50})
+
+    def _t(self, ap1=0.85, bp1=0.84, spot=0.0, strike=0.0, tp=0.6):
+        return Tick(ts="t", time_progress=tp, ws_bid=bp1, ws_ask=ap1,
+                    bid_p=(bp1, 0, 0), bid_s=(1e6, 0, 0), ask_p=(ap1, 0, 0), ask_s=(1e6, 0, 0),
+                    spot=spot, strike=strike)
+
+    def test_noop_without_spot_buys_favorite(self):
+        orders = self.s.decide(self._t(ap1=0.85), Position(cash=1000))
+        self.assertTrue(any(o.side == "YES" and o.kind == "BUY" for o in orders))
+
+    def test_spot_confirms_yes_favorite(self):
+        orders = self.s.decide(self._t(ap1=0.85, spot=100600, strike=100000), Position(cash=1000))
+        self.assertTrue(any(o.side == "YES" and o.kind == "BUY" for o in orders))
+
+    def test_spot_vetoes_doomed_yes_favorite(self):
+        # YES is the prediction favorite (0.85 in band) but spot says NO -> veto, no buy
+        orders = self.s.decide(self._t(ap1=0.85, spot=99400, strike=100000), Position(cash=1000))
+        self.assertFalse(any(o.kind == "BUY" for o in orders))
+
+
 class TestFavHoldAndNoOp(unittest.TestCase):
     def test_fav_hold_has_no_stop(self):
         s = S.FavHold("h", {"stop_p": 0.50})
