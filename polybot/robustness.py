@@ -95,6 +95,24 @@ def capacity_curve(markets: List[Dict[str, np.ndarray]], cfg: dict,
     return out
 
 
+def sequential_stability(markets: List[Dict[str, np.ndarray]], cfg: dict,
+                         k: int = 6, capital: float = 1000.0) -> List[dict]:
+    """Edge stability across k CONTIGUOUS market segments (regime/temporal robustness — the
+    closest thing to walk-forward without timestamps). Unlike the interleaved Monte-Carlo,
+    this catches decay over the collection period: all-positive segments => no decay."""
+    from .paper import paper_trade
+    n = len(markets)
+    out = []
+    for i in range(k):
+        seg = markets[i * n // k:(i + 1) * n // k]
+        if not seg:
+            continue
+        r = paper_trade(seg, cfg, capital)
+        out.append({"segment": i + 1, "markets": len(seg),
+                    "roi_pct": r.roi_pct, "win_rate_pct": r.win_rate_pct})
+    return out
+
+
 def cost_sensitivity(markets: List[Dict[str, np.ndarray]], cfg: dict,
                      grid=((0.001, 0.002), (0.002, 0.004), (0.002, 0.010))) -> List[dict]:
     out = []

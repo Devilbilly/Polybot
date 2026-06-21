@@ -79,6 +79,22 @@ class TestDiversification(unittest.TestCase):
         self.assertEqual(len(fr[0]), len(markets))
 
 
+class TestSequentialStability(unittest.TestCase):
+    def test_segments_reported(self):
+        markets = [make_market(fav="YES") for _ in range(60)]
+        segs = R.sequential_stability(markets, CFG, k=6)
+        self.assertEqual(len(segs), 6)
+        for s in segs:
+            self.assertIn("roi_pct", s)
+            self.assertIn("win_rate_pct", s)
+            self.assertEqual(s["markets"], 10)
+
+    def test_all_winning_markets_all_positive(self):
+        markets = [make_market(fav="YES") for _ in range(48)]
+        segs = R.sequential_stability(markets, CFG, k=4)
+        self.assertTrue(all(s["roi_pct"] > 0 for s in segs))
+
+
 class TestCapacity(unittest.TestCase):
     def test_thin_books_degrade_roi_with_capital(self):
         thin = [make_market(fav="YES", depth=30.0) for _ in range(15)]
