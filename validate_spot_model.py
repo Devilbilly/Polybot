@@ -29,12 +29,23 @@ def main(n_seconds=36000, tau=60):
         if sel.sum() < 5:
             continue
         print(f"  {lo:.1f}-{hi:.1f}    {sel.sum():>5} {outs[sel].mean()*100:>12.0f}%  {preds[sel].mean()*100:>6.0f}%")
-    order = np.argsort(preds); r = np.empty(len(preds)); r[order] = np.arange(1, len(preds) + 1)
-    n1, n0 = outs.sum(), len(outs) - outs.sum()
-    auc = (r[outs == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0) if n1 and n0 else 0.5
+    def _auc(p, y):
+        o = np.argsort(p); rr = np.empty(len(p)); rr[o] = np.arange(1, len(p) + 1)
+        a, b = y.sum(), len(y) - y.sum()
+        return (rr[y == 1].sum() - a * (a + 1) / 2) / (a * b) if a and b else 0.5
+
+    auc = _auc(preds, outs)
     verdict = "SOUND" if auc > 0.8 else "WEAK"
-    print(f"\n[=>] model AUC vs real BTC outcomes: {auc:.3f}  -> spot model is {verdict} "
-          f"(necessary for the spot edge; the LAG is the part only measurable live)")
+    print(f"\n[=>] model AUC vs real BTC outcomes at tau={tau}s: {auc:.3f}  -> spot model is {verdict}")
+
+    # Information-arrival profile: AUC across time-to-close (deployment guidance on entry timing).
+    print("\n=== Model information arrival (AUC by time-to-close) ===")
+    print(f"{'tau(s)':>7} {'AUC':>7}")
+    for ta in (240, 180, 120, 90, 60, 30, 10):
+        pr = np.array([prob_up(w[300 - ta], w[0], ta, vol) for w in wins])
+        print(f"{ta:>7} {_auc(pr, outs):>7.3f}")
+    print("(signal exists early too; the edge's lead-time advantage is largest mid-window,\n"
+          " where the model is confident but the market likely hasn't converged -- LAG is live-only)")
 
 
 if __name__ == "__main__":
