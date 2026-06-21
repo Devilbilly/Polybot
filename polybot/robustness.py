@@ -123,7 +123,8 @@ def depth_by_price(markets: List[Dict[str, np.ndarray]], price_lo=0.60, price_hi
     small-capital deployed weights."""
     buckets: Dict[float, list] = {}
     for m in markets:
-        ask = m["ws_ask"]; aS = m["ask_s1"]; tp = 1.0 - m["rem"] / 300.0
+        ask = m["ws_ask"]; aS = m["ask_s1"]
+        tp = 1.0 - m["rem"] / float(m.get("window", 300.0))   # use the market's window (consistent w/ ticks_from_arrays)
         sel = (tp >= tp_min) & (ask >= price_lo) & (ask <= price_hi)
         for p, s in zip(ask[sel], aS[sel] * ask[sel]):
             b = round(p * 20) / 20
