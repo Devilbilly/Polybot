@@ -27,8 +27,9 @@ def build_portfolio(cfg: dict, capital: float = 1000.0) -> Portfolio:
     return Portfolio(strats, weights, total_capital=capital, engine=engine, risk=risk)
 
 
-def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict) -> Tick:
-    """Assemble a core.Tick from a WS update + parsed L2 book (look-ahead-free time)."""
+def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict,
+              spot: float = 0.0, strike: float = 0.0) -> Tick:
+    """Assemble a core.Tick from a WS update + parsed L2 book (+ optional BTC spot/strike)."""
     tp = max(0.0, min(1.0, 1.0 - rem / WINDOW_SEC))
     return Tick(
         ts="live", time_progress=tp, ws_bid=ws_bid, ws_ask=ws_ask,
@@ -36,6 +37,7 @@ def live_tick(rem: float, ws_bid: float, ws_ask: float, book: dict) -> Tick:
         bid_s=(book.get("bid_s1", 0.0), book.get("bid_s2", 0.0), book.get("bid_s3", 0.0)),
         ask_p=(book.get("ask_p1", 0.0), book.get("ask_p2", 0.0), book.get("ask_p3", 0.0)),
         ask_s=(book.get("ask_s1", 0.0), book.get("ask_s2", 0.0), book.get("ask_s3", 0.0)),
+        spot=spot, strike=strike,
     )
 
 
@@ -73,6 +75,11 @@ async def run(config_path: str = "polybot/portfolio.json"):  # pragma: no cover 
                 await asyncio.sleep(2); continue
             pf.new_market()
             last_bid = None
+            strike = 0.0          # BTC spot at window open (set on first tick)
+            try:
+                from .binance import fetch_spot
+            except Exception:
+                fetch_spot = None
             try:
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
@@ -82,13 +89,21 @@ async def run(config_path: str = "polybot/portfolio.json"):  # pragma: no cover 
                             break
                         msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
                         book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
+                        spot = 0.0
+                        if fetch_spot is not None:
+                            try:
+                                spot = fetch_spot()
+                                if strike == 0.0:
+                                    strike = spot            # window-open price = strike
+                            except Exception:
+                                spot = 0.0
                         for it in (msg if isinstance(msg, list) else [msg]):
                             if it.get("event_type") not in ("price_change", "best_bid_ask"):
                                 continue
                             wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
                             if wb <= 0 or wa <= 0:
                                 continue
-                            pf.process_tick(live_tick(rem, wb, wa, book)); last_bid = wb
+                            pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike)); last_bid = wb
                 if last_bid is not None:
                     res = pf.settle(winner_from_last(last_bid) == "YES")
                     log.info("[LIVE] round %d winner=%s pnl=$%+.2f cash=$%.2f",

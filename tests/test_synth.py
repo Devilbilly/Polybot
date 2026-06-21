@@ -1,7 +1,7 @@
 import unittest
 import random
 import numpy as np
-from polybot.synth import synth_market, synth_dataset
+from polybot.synth import synth_market, synth_dataset, market_from_path
 from polybot.btc_model import prob_up
 
 
@@ -34,6 +34,21 @@ class TestSynthMarket(unittest.TestCase):
     def test_dataset(self):
         ds = synth_dataset(seed=1, count=10, n=120)
         self.assertEqual(len(ds), 10)
+
+
+class TestMarketFromPath(unittest.TestCase):
+    def test_builds_from_real_path(self):
+        path = np.array([100000.0, 100100.0, 100200.0, 100300.0] * 75)  # 300 pts, rising
+        m = market_from_path(path, vol=0.0006, lag=2)
+        self.assertEqual(len(m["spot"]), 300)
+        self.assertEqual(m["strike"][0], 100000.0)        # default strike = first price
+        self.assertEqual(m["winner"], "YES")              # ends above strike
+
+    def test_strike_override_and_loser(self):
+        path = np.array([100000.0] * 150 + [99900.0] * 150)
+        m = market_from_path(path, strike=100050.0, lag=0)
+        self.assertEqual(m["strike"][0], 100050.0)
+        self.assertEqual(m["winner"], "NO")               # ends below the override strike
 
 
 if __name__ == "__main__":
