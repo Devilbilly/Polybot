@@ -1,14 +1,14 @@
 {
-    "_comment": "Favorites-only backtest/small-account config. SIZING (iter 47): bullet_pct raised 0.02->0.03 after an OOS sizing sweep (research_sizing.py) showed 2% was far below the geometric-growth-optimal for a small account — geo-growth/mkt rises 0.29->0.41% (test) while DD stays 9.2% (vs the 25% kill-switch). The win is a SMALL-ACCOUNT effect: it collapses above ~$10k as thin-book caps bind (+2345pp@$1k -> +15pp@$100k), consistent with the edge's $1-10k capacity. 0.03 is a deliberate FRACTIONAL-Kelly choice (growth-optimal was ~0.06+, DD 16%); kept conservative for estimation-error safety. Raise toward 0.04-0.06 only with higher risk appetite AND small capital.",
+    "_comment": "Favorites-only backtest/small-account config. SIZING (iter 47-48): bullet_pct 0.02->0.025 after an OOS sizing sweep (research_sizing.py) showed 2% was below the geometric-growth-optimal for a small account (geo-growth/mkt rises 0.29->0.41% as size goes 2->3%; arith Sharpe/mkt flat ~0.398 => classic below-Kelly under-betting, not leverage). TAIL-AWARE CHOICE: sized via the WORST-CASE Monte-Carlo ordering (not a single path) — across 2000 random orderings, worst-DD is 2.0%:17.2% / 2.5%:21.1% / 3.0%:24.7-25.2%. 3.0% rides/occasionally trips the 25% kill-switch; 2.5% keeps a buffer with 0 kills/2000 and ~4x the mean ROI of 2%. Kept fractional-Kelly (growth-optimal ~0.06+) for estimation-error safety — this bot blew up once from overconfidence. SCOPE: small-account effect ONLY; benefit collapses above ~$10k as thin-book caps bind (+2345pp@$1k -> +15pp@$100k), matching the $1-10k edge capacity. Raise toward 0.03 ONLY with explicit tolerance for a ~25% worst-case drawdown.",
     "strategies": [
         {"id": "fav_early", "name": "scale_in_favorite", "weight": 0.40,
-         "params": {"buy_p": 0.60, "sell_p": 0.80, "time_cutoff": 0.40, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.03, "lookback": 50, "min_rise": 0.02}},
+         "params": {"buy_p": 0.60, "sell_p": 0.80, "time_cutoff": 0.40, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.025, "lookback": 50, "min_rise": 0.02}},
         {"id": "fav_main", "name": "scale_in_favorite", "weight": 0.40,
-         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.03, "lookback": 50, "min_rise": 0.02}},
+         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.025, "lookback": 50, "min_rise": 0.02}},
         {"id": "fav_late", "name": "fav_convergence", "weight": 0.10,
-         "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.03}},
+         "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.025}},
         {"id": "fav_final", "name": "fav_convergence", "weight": 0.10,
-         "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.03}}
+         "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.025}}
     ],
     "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true},
     "risk": {"kill_switch_dd": 0.25, "round_loss_limit": 0.08, "min_capital": 50.0}
