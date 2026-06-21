@@ -10,7 +10,7 @@
         {"id": "fav_final", "name": "spot_confirmed_favorite", "weight": 0.07,
          "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.02, "vol": 0.0006, "window": 300, "confirm": 0.55}},
         {"id": "spot", "name": "btc_spot_divergence", "weight": 0.30,
-         "params": {"vol": 0.0006, "vol_window": 60, "edge": 0.08, "exit_edge": 0.0, "window": 300, "time_cutoff": 0.0, "max_buy": 1, "bullet_pct": 0.02}}
+         "params": {"vol": 0.0006, "vol_window": 60, "edge": 0.10, "exit_edge": 0.0, "window": 300, "time_cutoff": 0.0, "max_buy": 1, "bullet_pct": 0.02}}
     ],
     "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true, "walk_book": true},
     "risk": {"kill_switch_dd": 0.25, "round_loss_limit": 0.08, "min_capital": 50.0, "soft_dd": 0.15}
