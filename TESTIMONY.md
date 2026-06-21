@@ -21,6 +21,17 @@ fractional-Kelly 2.5% compounds ~22% faster for the same edge, the cost being a 
 the normal path; engages only above 15% DD). **Scope: a small-account effect** — the gain
 evaporates above ~$10k as thin-book capacity binds (verified +2345pp@$1k → +15pp@$100k).
 
+## [0b] Foundational significance test — is the bias real, independent of the strategy?
+Direct hypothesis test over **1,860 independent** cleanly-resolved markets (raw claim, no
+sizing/momentum/compounding machinery):
+- **BIAS** (won − mid): edge **+0.0311**, t=+3.36, one-sided **p=3.9e-04** → favorites genuinely underpriced
+- **TRADEABLE** (won − ask): edge **+0.0227**, t=+2.46, **p=7.0e-03** → survives the spread (real +EV)
+- Calibration: edge concentrated in the **0.70–0.80** band (win 0.814 vs mid 0.744, 95% CI
+  [0.776, 0.852] entirely above mid) — the band `fav_main` targets; other bands ~fair.
+- Caveat: t-test assumes market independence; regime clustering would shrink effective-n, but the
+  bias is *direction-agnostic* (favorites underpriced, not BTC trend), so clustering shifts *which*
+  side is favorite, not the bias magnitude.
+
 ## [1] Favorite edge — the real, backtest-validated edge (1861 real markets)
 - OOS paper trade (holdout) : **ROI +225%**, max DD 2.3%, win 68%  *(report.py holdout; the 70/30 split above gives +617% at 2.5%)*
 - 5-fold cross-validation   : all folds positive, worst fold **+47%**
