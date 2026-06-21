@@ -36,6 +36,8 @@ def ticks_from_arrays(a: Dict[str, np.ndarray]):
             bid_s=(a["bid_s1"][i], a["bid_s2"][i], a["bid_s3"][i]),
             ask_p=(a["ask_p1"][i], a["ask_p2"][i], a["ask_p3"][i]),
             ask_s=(a["ask_s1"][i], a["ask_s2"][i], a["ask_s3"][i]),
+            spot=(a["spot"][i] if "spot" in a else 0.0),
+            strike=(a["strike"][i] if "strike" in a else 0.0),
         )
 
 

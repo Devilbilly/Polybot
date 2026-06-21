@@ -36,6 +36,15 @@ class TestCausality(unittest.TestCase):
     def test_noop_causal(self):
         self.assertTrue(V.assert_causal(lambda mv: NoOp("n", {}), self.market))
 
+    def test_spot_strategy_causal_while_trading(self):
+        # the spot strategy actively trades on synthetic spot data and must still be causal
+        import random
+        from polybot.synth import synth_market
+        m = synth_market(random.Random(0), n=200, lag=5)
+        params = {"vol": 0.0006, "edge": 0.04, "window": 300, "time_cutoff": 0.0,
+                  "max_buy": 1, "bullet_pct": 0.02}
+        self.assertTrue(V.assert_causal(lambda mv: get_strategy("btc_spot_divergence", params), m))
+
 
 class TestRuntimeGuard(unittest.TestCase):
     def _pf(self):

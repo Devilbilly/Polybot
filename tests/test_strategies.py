@@ -142,6 +142,43 @@ class TestScaleInFavorite(unittest.TestCase):
         self.assertIsNone(self.s._side)
 
 
+class TestBtcSpotDivergence(unittest.TestCase):
+    def setUp(self):
+        self.s = S.BtcSpotDivergence("bs", {"vol": 0.0006, "edge": 0.05, "window": 300,
+                                            "time_cutoff": 0.0, "max_buy": 1, "bullet_pct": 0.02})
+
+    def _tick(self, ws_bid, ws_ask, spot, strike=100000.0, tp=0.5):
+        return Tick(ts="t", time_progress=tp, ws_bid=ws_bid, ws_ask=ws_ask,
+                    bid_p=(ws_bid, 0, 0), bid_s=(1e6, 0, 0), ask_p=(ws_ask, 0, 0), ask_s=(1e6, 0, 0),
+                    spot=spot, strike=strike)
+
+    def test_noop_without_spot(self):
+        t = Tick(ts="t", time_progress=0.5, ws_bid=0.2, ws_ask=0.21,
+                 ask_s=(1e6, 0, 0), bid_s=(1e6, 0, 0))  # spot/strike default 0
+        self.assertEqual(self.s.decide(t, Position(cash=1000)), [])
+
+    def test_buys_yes_when_model_above_market(self):
+        # spot well above strike -> model p ~0.9; market only asks 0.60 -> YES underpriced
+        orders = self.s.decide(self._tick(0.59, 0.60, spot=100400), Position(cash=1000))
+        self.assertTrue(any(o.side == "YES" and o.kind == "BUY" for o in orders))
+
+    def test_buys_no_when_model_below_market(self):
+        # spot well below strike -> model p ~0.1; market bid 0.40 (so NO ask 0.60) -> NO underpriced
+        orders = self.s.decide(self._tick(0.40, 0.41, spot=99600), Position(cash=1000))
+        self.assertTrue(any(o.side == "NO" and o.kind == "BUY" for o in orders))
+
+    def test_no_trade_within_edge(self):
+        # market already matches the model -> gap < edge -> no trade
+        from polybot.btc_model import prob_up
+        p = prob_up(100100, 100000, 150, 0.0006)
+        orders = self.s.decide(self._tick(p - 0.005, p + 0.005, spot=100100), Position(cash=1000))
+        self.assertEqual(orders, [])
+
+    def test_single_entry(self):
+        p = Position(cash=1000, n_entries=1)
+        self.assertEqual(self.s.decide(self._tick(0.59, 0.60, spot=100400), p), [])
+
+
 class TestFavHoldAndNoOp(unittest.TestCase):
     def test_fav_hold_has_no_stop(self):
         s = S.FavHold("h", {"stop_p": 0.50})

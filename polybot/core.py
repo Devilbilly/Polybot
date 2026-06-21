@@ -28,6 +28,8 @@ class Tick:
     bid_s: tuple = (0.0, 0.0, 0.0)   # L1..L3 bid sizes
     ask_p: tuple = (0.0, 0.0, 0.0)
     ask_s: tuple = (0.0, 0.0, 0.0)
+    spot: float = 0.0                # BTC spot now (live/synthetic); 0.0 = unknown (historical)
+    strike: float = 0.0              # BTC price at window open
 
     # convenience accessors (L1)
     @property

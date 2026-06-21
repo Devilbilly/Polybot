@@ -142,6 +142,38 @@ class ScaleInFavorite(MomentumFavorite):
         return orders
 
 
+@register("btc_spot_divergence")
+class BtcSpotDivergence(Strategy):
+    """Trade the gap between a BTC-spot model probability and the market price — the only
+    edge independent of the favorite-longshot bias. Buys the side the model says is
+    underpriced by more than `edge` (after a cost cushion). Requires tick.spot & tick.strike
+    (live or synthetic); a NO-OP on historical data that lacks them, so it is safe to deploy
+    alongside the favorite sleeves and simply idle until a spot feed is wired in."""
+    def __init__(self, name, params):
+        super().__init__(name, params)
+        self.vol = params.get("vol", 0.0005)        # per-sqrt-second BTC log-vol
+        self.edge = params.get("edge", 0.05)        # required model-vs-market gap
+        self.window = params.get("window", 300)
+        self.start = params.get("time_cutoff", 0.0)
+        self.max_buy = params.get("max_buy", 1)
+        self.bullet_pct = params.get("bullet_pct", 0.02)
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        if tick.spot <= 0.0 or tick.strike <= 0.0:           # no spot feed -> idle
+            return []
+        if tick.time_progress < self.start or pos.n_entries >= self.max_buy:
+            return []
+        from .btc_model import prob_up
+        secs_left = max(0.0, (1.0 - tick.time_progress) * self.window)
+        p = prob_up(tick.spot, tick.strike, secs_left, self.vol)
+        usd = pos.cash * self.bullet_pct
+        if p - tick.ws_ask > self.edge:                       # YES underpriced vs model
+            return [Order("YES", "BUY", usd)]
+        if tick.ws_bid - p > self.edge:                       # NO underpriced (1-p vs 1-ws_bid)
+            return [Order("NO", "BUY", usd)]
+        return []
+
+
 @register("noop")
 class NoOp(Strategy):
     """Never trades. Sanity baseline (final equity must equal start)."""
