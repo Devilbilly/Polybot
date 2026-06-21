@@ -79,6 +79,18 @@ class TestDiversification(unittest.TestCase):
         self.assertEqual(len(fr[0]), len(markets))
 
 
+class TestCapacity(unittest.TestCase):
+    def test_thin_books_degrade_roi_with_capital(self):
+        thin = [make_market(fav="YES", depth=30.0) for _ in range(15)]
+        rows = R.capacity_curve(thin, CFG, capitals=(1_000, 1_000_000))
+        self.assertGreater(rows[0]["roi_pct"], rows[1]["roi_pct"])   # capacity-limited
+
+    def test_deep_books_roi_capital_independent(self):
+        deep = [make_market(fav="YES", depth=1e8) for _ in range(15)]
+        rows = R.capacity_curve(deep, CFG, capitals=(1_000, 100_000))
+        self.assertAlmostEqual(rows[0]["roi_pct"], rows[1]["roi_pct"], delta=1.0)
+
+
 class TestCostSensitivity(unittest.TestCase):
     def test_higher_cost_not_better(self):
         markets = [make_market(fav="YES") for _ in range(12)]

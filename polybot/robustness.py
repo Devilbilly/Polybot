@@ -81,6 +81,20 @@ def diversification_report(markets: List[Dict[str, np.ndarray]], cfgs: List[dict
             "combined_sharpe": _sharpe(combined)}
 
 
+def capacity_curve(markets: List[Dict[str, np.ndarray]], cfg: dict,
+                   capitals=(1_000, 10_000, 100_000, 1_000_000)) -> List[dict]:
+    """How the edge scales with deployed capital. With realistic fill caps, larger bankrolls
+    hit thin-book limits -> the per-market return SHRINKS, so ROI% degrades. The capital where
+    ROI starts collapsing is the strategy's real capacity. Uses the stateful paper trader."""
+    from .paper import paper_trade
+    out = []
+    for cap in capitals:
+        r = paper_trade(markets, cfg, capital=float(cap))
+        out.append({"capital": cap, "roi_pct": r.roi_pct, "final": r.final,
+                    "max_dd_pct": r.max_dd_pct})
+    return out
+
+
 def cost_sensitivity(markets: List[Dict[str, np.ndarray]], cfg: dict,
                      grid=((0.001, 0.002), (0.002, 0.004), (0.002, 0.010))) -> List[dict]:
     out = []
