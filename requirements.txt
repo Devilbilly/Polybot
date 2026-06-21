@@ -1,0 +1,7 @@
+# Polybot runtime dependencies.
+# Live trader + probe need only: numpy, aiohttp, websockets.
+# Backtests / CSV loading additionally need: pandas.
+numpy>=1.24
+aiohttp>=3.9
+websockets>=12.0
+pandas>=2.0      # only for backtests / market_data CSV loading; live path does not require it
