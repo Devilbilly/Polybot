@@ -38,7 +38,8 @@ def session_metrics(db, session_id) -> Optional[dict]:
     traded = pnls[np.abs(pnls) > 1e-9]
     rets = np.diff(curve) / np.array(curve[:-1])
     rets = rets[np.abs(rets) > 1e-12]
-    sharpe = float(rets.mean() / rets.std() * np.sqrt(len(rets))) if len(rets) > 1 and rets.std() > 0 else 0.0
+    # per-round Sharpe (mean/std); NOT * sqrt(N) (that is the t-statistic, grows with session length)
+    sharpe = float(rets.mean() / rets.std()) if len(rets) > 1 and rets.std() > 0 else 0.0
     # longest losing streak
     streak = worst = 0
     for p in pnls:
@@ -46,16 +47,28 @@ def session_metrics(db, session_id) -> Optional[dict]:
             streak += 1; worst = max(worst, streak)
         elif p > 1e-9:
             streak = 0
-    attr = {r[0]: r[1] for r in db.conn.execute(
-        "SELECT strategy, SUM(pnl) FROM session_strategy WHERE session_id=? GROUP BY strategy",
-        (session_id,)).fetchall()}
+    # Per-strategy attribution. Raw SUM(pnl) is CONFOUNDED by capital allocation (a 40%-weighted
+    # sleeve shows ~4x the dollars of a 10% sleeve at equal ROI), so we ALSO report per-strategy
+    # ROI% (final/start-1), the un-confounded edge-per-dollar. start_cash = first round's cash - pnl.
+    sr = db.conn.execute(
+        "SELECT strategy, pnl, cash FROM session_strategy WHERE session_id=? ORDER BY round_no",
+        (session_id,)).fetchall()
+    attr_pnl, attr_state = {}, {}
+    for strat, pnl, cash in sr:
+        attr_pnl[strat] = attr_pnl.get(strat, 0.0) + pnl
+        if strat not in attr_state:
+            attr_state[strat] = {"start": cash - pnl, "last": cash}   # start = cash before round-1 pnl
+        attr_state[strat]["last"] = cash
+    attr_roi = {s: ((d["last"] / d["start"] - 1) * 100 if d["start"] > 1e-9 else 0.0)
+                for s, d in attr_state.items()}
     return {
         "session_id": session_id, "rounds": len(rows),
         "start": start, "final": final, "roi_pct": (final / start - 1) * 100 if start else 0.0,
         "max_dd_pct": maxdd * 100, "current_dd_pct": current_dd * 100,
         "win_rate_pct": (np.sum(traded > 0) / len(traded) * 100) if len(traded) else 0.0,
         "sharpe": sharpe, "longest_losing_streak": worst,
-        "per_strategy_pnl": attr,
+        "per_strategy_pnl": attr_pnl,           # absolute $ (confounded by weight)
+        "per_strategy_roi": attr_roi,           # ROI% per sleeve (un-confounded edge-per-dollar)
     }
 
 

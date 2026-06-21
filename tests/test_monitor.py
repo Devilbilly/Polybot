@@ -37,6 +37,25 @@ class TestMonitor(unittest.TestCase):
         self.assertEqual(m["per_strategy_pnl"]["a"], 75.0)
         db.close()
 
+    def test_per_strategy_roi_unconfounded_by_weight(self):
+        # two sleeves: A starts $400, B starts $100; BOTH gain 10%/round -> equal ROI%, unequal $.
+        import os, tempfile
+        from polybot.database import Database
+        from polybot.core import RoundResult
+        with tempfile.TemporaryDirectory() as d:
+            db = Database(os.path.join(d, "t.db"))
+            ca, cb = 400.0, 100.0
+            for i in range(1, 4):
+                pa, pb = ca * 0.1, cb * 0.1
+                ca += pa; cb += pb
+                db.log_round("s", RoundResult(i, "YES", pa + pb, ca + cb,
+                             {"A": {"pnl": pa, "cash": ca}, "B": {"pnl": pb, "cash": cb}}))
+            m = M.session_metrics(db, "s")
+            self.assertGreater(m["per_strategy_pnl"]["A"], m["per_strategy_pnl"]["B"])      # $ confounded
+            self.assertAlmostEqual(m["per_strategy_roi"]["A"], m["per_strategy_roi"]["B"], places=2)  # ROI% equal
+            self.assertAlmostEqual(m["per_strategy_roi"]["A"], 33.1, places=1)
+            db.close()
+
     def test_missing_session(self):
         db = self._db_with_session([10.0])
         self.assertIsNone(M.session_metrics(db, "nope"))
