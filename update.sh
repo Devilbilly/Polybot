@@ -14,10 +14,16 @@ REPO="${POLYBOT_REPO:-Devilbilly/Polybot}"
 BRANCH="${POLYBOT_BRANCH:-master}"
 DEST="${POLYBOT_DIR:-$HOME/Polybot}"
 LOG="$HOME/live_overnight.log"
-MODE="${1:-single}"        # 'single' (default: one BTC market, favorites) or 'multi' (BTC/ETH/SOL/XRP, two-edge)
+MODE="${1:-single}"        # single | multi (PLAYER: trade) | record (MONITOR: collect data only)
+# Player (single/multi) and monitor (record) are SEPARATE supervised processes with distinct
+# supervisor files, logs, and kill patterns, so updating/stopping one never touches the other.
 case "$MODE" in
-  multi)  LAUNCH="python3 -u -m polybot.live --multi" ;;
-  *)      LAUNCH="python3 -u -m polybot.live" ;;
+  record) LAUNCH="python3 -u -m polybot.live --record"; SUP="$DEST/supervise-rec.sh";   LOG="$HOME/record.log"
+          KILL_SUP="supervise-rec.sh";                  KILL_PROC="polybot.live --record" ;;
+  multi)  LAUNCH="python3 -u -m polybot.live --multi";  SUP="$DEST/supervise-trade.sh"; LOG="$HOME/live_overnight.log"
+          KILL_SUP="supervise.sh|supervise-trade.sh";   KILL_PROC="polybot.live --multi" ;;
+  *)      LAUNCH="python3 -u -m polybot.live";          SUP="$DEST/supervise-trade.sh"; LOG="$HOME/live_overnight.log"
+          KILL_SUP="supervise.sh|supervise-trade.sh";   KILL_PROC="polybot.live --multi|polybot.live$" ;;
 esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -42,39 +48,36 @@ cp -r "$SRC/polybot" "$DEST/"
 
 echo "[update] updated. ping fix present (want 1): $(grep -c 'ping_timeout=None' "$DEST/polybot/live.py")"
 
-echo "[update] restarting (supervised; survives logout + auto-restarts on crash) ..."
-# kill SUPERVISORS first (else they respawn a bot), then the bots. Two patterns because the
-# supervisor cmdline has capital-P 'Polybot' (case-sensitive) while the bot has 'polybot.live'.
-pkill -9 -f "supervise.sh" 2>/dev/null || true
-sleep 1
-pkill -9 -f "polybot.live" 2>/dev/null || true
-sleep 2
-pkill -9 -f "supervise.sh" 2>/dev/null || true   # belt-and-suspenders: catch any respawn race
-pkill -9 -f "polybot.live" 2>/dev/null || true
-sleep 1
+echo "[update] restarting '$MODE' (supervised; survives logout + auto-restarts on crash) ..."
+# kill ONLY this mode's supervisor + process (so the OTHER mode keeps running). Supervisors first
+# (else they respawn), twice for any race.
+pkill -9 -f "$KILL_SUP" 2>/dev/null || true; sleep 1
+pkill -9 -f "$KILL_PROC" 2>/dev/null || true; sleep 2
+pkill -9 -f "$KILL_SUP" 2>/dev/null || true
+pkill -9 -f "$KILL_PROC" 2>/dev/null || true; sleep 1
 loginctl enable-linger "$USER" 2>/dev/null && echo "[update] linger ON (survives SSH logout)" \
                                             || echo "[update] note: couldn't enable linger"
-# write a tiny supervisor that auto-restarts the bot on ANY exit, then launch it fully detached
-echo "[update] mode: $MODE  ->  $LAUNCH"
-cat > "$DEST/supervise.sh" <<SUP
+# write a mode-specific supervisor that auto-restarts on ANY exit, then launch it fully detached
+echo "[update] mode: $MODE  ->  $LAUNCH   (supervisor: $(basename "$SUP"), log: $LOG)"
+cat > "$SUP" <<SUP_EOF
 #!/usr/bin/env bash
 cd "\$(dirname "\$0")"
 while true; do
-  echo "[supervisor] \$(date '+%F %T') starting bot ($MODE)"
+  echo "[supervisor] \$(date '+%F %T') starting $MODE"
   $LAUNCH
-  echo "[supervisor] \$(date '+%F %T') bot exited (\$?); restarting in 5s"
+  echo "[supervisor] \$(date '+%F %T') exited (\$?); restarting in 5s"
   sleep 5
 done
-SUP
-chmod +x "$DEST/supervise.sh"
-setsid nohup bash "$DEST/supervise.sh" >> "$LOG" 2>&1 </dev/null &
+SUP_EOF
+chmod +x "$SUP"
+setsid nohup bash "$SUP" >> "$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 sleep 12
-if pgrep -af "[m] polybot.live" | grep -q python; then
-  echo "[update] RUNNING (supervised):"; pgrep -af "polybot" | grep -vi "pgrep\|update.sh" | head -3
+if pgrep -f "$KILL_PROC" >/dev/null; then
+  echo "[update] RUNNING ($MODE):"; pgrep -af "$KILL_PROC" | head -2
 else
   echo "[update] NOT RUNNING — check $LOG"
 fi
-echo "[update] watch:  tail -f $LOG      stop:  pkill -9 -f polybot"
+echo "[update] watch:  tail -f $LOG      stop THIS mode:  pkill -9 -f '$KILL_SUP'; pkill -9 -f '$KILL_PROC'"
 echo "[update] --- recent log ---"
 tail -10 "$LOG"

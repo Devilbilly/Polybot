@@ -427,6 +427,91 @@ async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = 
             await asyncio.sleep(3)
 
 
+async def _record_one_market(token, end_ts, strike, session, db, done, fetch_spot_fn,
+                             ssl_ctx, log, tag=""):  # pragma: no cover (network)
+    """Record ONE market's tick stream to the DB — NO trading. The monitor's per-market worker,
+    deliberately separate from the trader's _trade_one_market so data collection is independent."""
+    import time, websockets
+    recent = []; seq = 0
+    try:
+        async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=20, ping_timeout=None) as ws:
+            await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
+            async for (msg, book, spot, rem) in _live_msg_stream(ws, session, token, end_ts,
+                                                                 fetch_spot_fn, time.time):
+                if rem <= 0:
+                    break
+                if strike == 0.0 and spot > 0.0:
+                    strike = spot
+                wb, wa = ws_best_bid_ask(msg, token)
+                if wb <= 0 or wa <= 0:
+                    continue
+                try:
+                    db.insert_tick(token, seq, build_tick_row(rem, wb, wa, book, spot=spot, strike=strike))
+                    seq += 1
+                except Exception:
+                    pass
+                recent.append(wb)
+    except Exception as e:
+        if log:
+            log.info("[%-4s rec] reconnect: %s", tag, type(e).__name__)
+    finally:
+        if seq > 0:
+            win = winner_from_recent(recent)
+            try:
+                db.upsert_market(token, token_id=token, end_ts=end_ts, winner=win, n_ticks=seq)
+            except Exception:
+                pass
+            done.add(token)
+            if log:
+                log.info("[%-4s] recorded %d ticks  winner=%s", tag, seq, win)
+
+
+async def record_multi(db_path: str = "market_data.db",
+                       assets=ASSET_SLUGS):  # pragma: no cover (needs live network)
+    """MONITOR: continuously record ALL crypto up/down markets to the DB — independent of any
+    trader. Run as its own process (`--record`) so data collection survives trader restarts/tuning.
+    Writes to a SEPARATE db (market_data.db) so it never contends with the trader's polymarket.db."""
+    import asyncio, ssl, time, logging
+    import aiohttp
+    from .database import Database
+    log = logging.getLogger("polybot.rec")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    db = Database(db_path)
+    ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
+    log.info("[REC] monitor recording %s -> %s", ",".join(assets), db_path)
+    async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
+                                     connector=aiohttp.TCPConnector(ssl=False)) as session:
+        await _connectivity_report(session, log)
+        try:
+            from .binance import fetch_spot, fetch_klines
+        except Exception:
+            fetch_spot = fetch_klines = None
+        done = set(); tasks = {}; last_bak = time.time(); last_hb = 0.0
+        while True:
+            if time.time() - last_bak > 1800:                   # rolling 30-min backup (data safety)
+                try:
+                    db.backup(db_path + ".bak"); log.info("[REC] db backed up -> %s.bak", db_path)
+                except Exception:
+                    pass
+                last_bak = time.time()
+            for a in [a for a, k in tasks.items() if k.done()]:
+                tasks.pop(a, None)
+            for token, end_ts, label in await discover_all_markets(session, done, log, assets):
+                asset = label.split("-")[0]
+                if asset in tasks or token in done:
+                    continue
+                is_btc = asset in ("btc", "bitcoin")
+                strike = window_open_strike(end_ts, fetch_klines) if (is_btc and fetch_klines) else 0.0
+                spot_fn = fetch_spot if is_btc else None
+                log.info("[%-4s] >>> recording %s  %4.0fs left", asset, label, end_ts - time.time())
+                tasks[asset] = asyncio.create_task(
+                    _record_one_market(token, end_ts, strike, session, db, done, spot_fn, ssl_ctx, log, asset))
+            if not tasks and time.time() - last_hb > 30:
+                log.info("[REC] no open markets; searching… (assets=%s)", ",".join(assets))
+                last_hb = time.time()
+            await asyncio.sleep(3)
+
+
 async def probe_all(assets=ASSET_SLUGS):  # pragma: no cover (network)
     """`--probe-all`: list every currently-open up/down market discovery finds, across assets —
     run this FIRST to verify what's tradeable before starting run_multi."""
@@ -472,7 +557,9 @@ if __name__ == "__main__":  # pragma: no cover
         asyncio.run(probe_all())          # list all open up/down markets (verify before --multi)
     elif "--probe" in sys.argv:
         asyncio.run(probe())              # single-market connectivity + discovery check
+    elif "--record" in sys.argv:
+        asyncio.run(record_multi())       # MONITOR: record all markets, no trading (separate process)
     elif "--multi" in sys.argv:
-        asyncio.run(run_multi())          # trade+record MANY markets in parallel (two-edge config)
+        asyncio.run(run_multi())          # PLAYER: trade many markets in parallel (favorites-only)
     else:
         asyncio.run(run())                # single BTC market, favorites-only (default, proven)
