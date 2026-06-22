@@ -391,6 +391,10 @@ async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = 
             fetch_spot = fetch_klines = None
         done = set(); portfolios = {}; tasks = {}; last_hb = 0.0; last_total = 0.0; last_bak = time.time()
         while True:
+            try:
+                db.conn.commit()                                # flush recorded ticks every loop (~3s) -> durable
+            except Exception:
+                pass
             if time.time() - last_bak > 1800:                   # rolling 30-min DB backup (data safety)
                 try:
                     db.backup(db_path + ".bak")
@@ -488,6 +492,10 @@ async def record_multi(db_path: str = "market_data.db",
             fetch_spot = fetch_klines = None
         done = set(); tasks = {}; last_bak = time.time(); last_hb = 0.0
         while True:
+            try:
+                db.conn.commit()                                # flush recorded ticks every loop (~3s) -> durable
+            except Exception:
+                pass
             if time.time() - last_bak > 1800:                   # rolling 30-min backup (data safety)
                 try:
                     db.backup(db_path + ".bak"); log.info("[REC] db backed up -> %s.bak", db_path)
