@@ -300,6 +300,132 @@ async def run(config_path: str = "polybot/portfolio.json",
                 await asyncio.sleep(2)
 
 
+# ----------------------------- multi-market (parallel) -----------------------------
+# The favorite-longshot edge isn't BTC-specific — it should appear in every crypto up/down market.
+# Trading several in parallel deploys idle capital, multiplies opportunities, and diversifies.
+ASSET_SLUGS = ("btc", "eth", "sol", "xrp")          # guessed 5-min slug prefixes
+_UPDOWN_ASSETS = ("btc", "bitcoin", "eth", "ethereum", "sol", "solana", "xrp", "ripple",
+                  "doge", "dogecoin", "ltc", "litecoin", "bnb", "ada", "cardano")
+
+
+def _is_updown_market(row):
+    """Any crypto up/down market (any asset / short timeframe). Loose on purpose — discovery is
+    verified by --probe-all before trading."""
+    blob = json.dumps(row).lower()
+    asset = any(a in blob for a in _UPDOWN_ASSETS)
+    updown = ("updown" in blob) or ("up-or-down" in blob) or ("up or down" in blob) \
+        or (("up" in blob) and ("down" in blob))
+    return asset and updown
+
+
+async def discover_all_markets(session, done, log=None, assets=ASSET_SLUGS):  # pragma: no cover (network)
+    """All currently-OPEN crypto up/down 5-min markets -> [(token, end_ts, label)]. Per-asset
+    guessed slug (fast) + the listing fallback. Only windows ending within one window length."""
+    import time
+    now = int(time.time()); base = now - (now % WINDOW_SEC)
+    out = []; seen = set()
+    for a in assets:                                     # fast path: guessed per-asset 5-min slug
+        for ts in (base, base - WINDOW_SEC):
+            if ts > now:
+                continue
+            ev = await _get_json(session, GAMMA_API.format(f"{a}-updown-5m-{ts}"))
+            if ev and len(ev) > 0 and not ev[0].get("closed"):
+                tok = extract_token(ev); ets = ts + WINDOW_SEC
+                if tok and tok not in done and tok not in seen and now < ets <= now + WINDOW_SEC:
+                    seen.add(tok); out.append((tok, ets, f"{a}-updown-5m-{ts}"))
+    for url in DISCOVERY_LISTINGS:                       # fallback: catch other assets/slug formats
+        for row in _listing_rows(await _get_json(session, url)):
+            if not _is_updown_market(row):
+                continue
+            tok = _token_from_row(row); ets = market_end_ts(row.get("slug", ""), row)
+            if tok and tok not in done and tok not in seen and ets and now < ets <= now + WINDOW_SEC:
+                seen.add(tok); out.append((tok, ets, row.get("slug", "listing")))
+    return out
+
+
+async def _connect_and_trade(pf, token, end_ts, strike, session, db, session_id, done,
+                             fetch_spot_fn, ssl_ctx, log, label=""):  # pragma: no cover (network)
+    """One market's WS connect + trade+record, settle-in-finally. Used per-market by run_multi
+    (and mirrors what run() does inline). Exceptions are contained so one market can't kill others."""
+    import time, websockets
+    tag = (label.split("-")[0] or token[:6])
+    try:
+        async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=20, ping_timeout=None) as ws:
+            await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
+            await _trade_one_market(
+                pf, end_ts, strike,
+                _live_msg_stream(ws, session, token, end_ts, fetch_spot_fn, time.time),
+                token, db, session_id, done, time.time, log)
+    except Exception as e:
+        if log:
+            log.info("[%s] reconnect: %s", tag, type(e).__name__)
+
+
+async def run_multi(config_path: str = "polybot/portfolio_live.json", db_path: str = "polymarket.db",
+                    capital_per_market: float = 200.0,
+                    assets=ASSET_SLUGS):  # pragma: no cover (needs live network)
+    """Trade + record MANY crypto up/down markets in parallel (one Portfolio each). Uses the
+    two-edge config by default so the BTC-spot sleeve runs on BTC; favorites run on every asset.
+    Every market's ticks are saved to the DB for replay/backtest. capital_per_market is the notional
+    PER market (aggregate exposure = capital_per_market x concurrently-open markets)."""
+    import asyncio, ssl, time, logging
+    import aiohttp
+    from .database import Database
+    log = logging.getLogger("polybot.live")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    cfg = json.load(open(config_path))
+    db = Database(db_path)
+    session_id = f"multi-{int(time.time())}"
+    ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
+    log.info("[MULTI] config=%s  $%.0f/market  assets=%s  session=%s",
+             config_path, capital_per_market, ",".join(assets), session_id)
+    async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
+                                     connector=aiohttp.TCPConnector(ssl=False)) as session:
+        await _connectivity_report(session, log)
+        try:
+            from .binance import fetch_spot, fetch_klines
+        except Exception:
+            fetch_spot = fetch_klines = None
+        done = set(); tasks = {}; last_hb = 0.0
+        while True:
+            for tok in [t for t, k in tasks.items() if k.done()]:   # reap finished markets
+                tasks.pop(tok, None)
+            for token, end_ts, label in await discover_all_markets(session, done, log, assets):
+                if token in tasks or token in done:
+                    continue
+                pf = build_portfolio(cfg, capital_per_market); pf.new_market()
+                is_btc = label.startswith(("btc", "bitcoin"))
+                strike = window_open_strike(end_ts, fetch_klines) if (is_btc and fetch_klines) else 0.0
+                spot_fn = fetch_spot if is_btc else None        # spot model only valid for BTC
+                log.info("[MULTI] >>> %-26s %4.0fs left  strike=%.2f  (now trading %d markets)",
+                         label, end_ts - time.time(), strike, len(tasks) + 1)
+                tasks[token] = asyncio.create_task(
+                    _connect_and_trade(pf, token, end_ts, strike, session, db, session_id, done,
+                                       spot_fn, ssl_ctx, log, label))
+            if not tasks and time.time() - last_hb > 30:
+                log.info("[MULTI] no open markets right now; searching… (assets=%s)", ",".join(assets))
+                last_hb = time.time()
+            await asyncio.sleep(3)
+
+
+async def probe_all(assets=ASSET_SLUGS):  # pragma: no cover (network)
+    """`--probe-all`: list every currently-open up/down market discovery finds, across assets —
+    run this FIRST to verify what's tradeable before starting run_multi."""
+    import ssl, logging, time, aiohttp
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    log = logging.getLogger("polybot.live")
+    ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
+    async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla"},
+                                     connector=aiohttp.TCPConnector(ssl=False)) as session:
+        await _connectivity_report(session, log)
+        mkts = await discover_all_markets(session, set(), log, assets)
+        log.info("[PROBE-ALL] %d open up/down markets found (assets tried: %s):", len(mkts), ",".join(assets))
+        for tok, ets, label in mkts:
+            log.info("   %-30s ends_in=%4.0fs  token=%s…", label, ets - time.time(), str(tok)[:14])
+        if not mkts:
+            log.info("   none found — only BTC may be live now, or other assets use a different slug.")
+
+
 async def probe():  # pragma: no cover (network)
     """`python -m polybot.live --probe`: one-shot diagnosis — connectivity report + a single
     discovery attempt — then exit. Replaces the old standalone probe script."""
@@ -323,4 +449,11 @@ async def probe():  # pragma: no cover (network)
 
 if __name__ == "__main__":  # pragma: no cover
     import asyncio, sys
-    asyncio.run(probe() if "--probe" in sys.argv else run())
+    if "--probe-all" in sys.argv:
+        asyncio.run(probe_all())          # list all open up/down markets (verify before --multi)
+    elif "--probe" in sys.argv:
+        asyncio.run(probe())              # single-market connectivity + discovery check
+    elif "--multi" in sys.argv:
+        asyncio.run(run_multi())          # trade+record MANY markets in parallel (two-edge config)
+    else:
+        asyncio.run(run())                # single BTC market, favorites-only (default, proven)

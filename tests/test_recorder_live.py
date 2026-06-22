@@ -150,6 +150,17 @@ class TestMarketDiscovery(unittest.TestCase):
     def test_market_end_ts_none_when_unavailable(self):
         self.assertIsNone(LV.market_end_ts("named-slug-no-ts", {"title": "x"}))
 
+    def test_is_updown_market_matches_any_crypto(self):
+        self.assertTrue(LV._is_updown_market({"slug": "eth-updown-5m-1700000000", "title": "ETH Up or Down"}))
+        self.assertTrue(LV._is_updown_market({"slug": "sol-updown-5m-1", "title": "Solana up or down"}))
+        self.assertTrue(LV._is_updown_market({"title": "XRP up/down 5 min"}))
+        self.assertTrue(LV._is_updown_market({"slug": "btc-updown-5m-1", "title": "Bitcoin Up or Down"}))
+
+    def test_is_updown_market_rejects_non_updown(self):
+        self.assertFalse(LV._is_updown_market({"slug": "fed-rate-hike", "title": "Will the Fed hike?"}))
+        self.assertFalse(LV._is_updown_market({"title": "Ethereum above $5000 by 2027"}))  # crypto but not up/down
+        self.assertFalse(LV._is_updown_market({"title": "Election up or down ballot"}))     # up/down but not crypto
+
 
 if __name__ == "__main__":
     unittest.main()
