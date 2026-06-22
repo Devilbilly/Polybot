@@ -29,11 +29,17 @@ from tests.helpers import make_market
 
 
 class _FakeDB:
-    """Captures log_round calls so the loop's settlement record is observable in tests."""
+    """Captures log_round + the tick/market recording so the loop is observable in tests."""
     def __init__(self):
         self.rounds = []
+        self.ticks = []
+        self.markets = []
     def log_round(self, session_id, res, market_id=None, ts=None):
         self.rounds.append((session_id, res, market_id, ts))
+    def insert_tick(self, token, seq, row):
+        self.ticks.append((token, seq, row))
+    def upsert_market(self, market_id, **kw):
+        self.markets.append((market_id, kw))
 
 
 async def _aiter(items, raise_after=False):
@@ -228,6 +234,20 @@ class TestTradeOneMarketLoop(unittest.TestCase):
         self.assertEqual(len(db.rounds), 1)              # settlement recorded exactly once
         self.assertIn("TKN", done)                        # marked done -> never re-traded
         self.assertGreater(pf.total_cash(), 0.0)
+
+    def test_records_ticks_and_market_for_replay(self):
+        # live trader must persist the tick stream + market(winner) so windows are backtest-replayable
+        stream = _aiter([_msg(0.84, 0.85, rem=120), _msg(0.90, 0.91, rem=80),
+                         _msg(0.95, 0.96, rem=10), _msg(0.95, 0.96, rem=5)])
+        pf, db, done, coro = self._run(stream)
+        asyncio.run(coro)
+        self.assertEqual(len(db.ticks), 4, "every processed tick must be recorded")
+        self.assertEqual(db.ticks[0][0], "TKN")            # recorded under the right token
+        self.assertEqual(len(db.markets), 1)               # market upserted once
+        mid, kw = db.markets[0]
+        self.assertEqual(mid, "TKN")
+        self.assertEqual(kw.get("winner"), "YES")          # winner recorded (matches settlement)
+        self.assertEqual(kw.get("n_ticks"), 4)
 
     def test_midmarket_disconnect_still_settles_no_leak(self):
         # CRITICAL invariant (iter-43): a disconnect mid-market must STILL settle in finally, so

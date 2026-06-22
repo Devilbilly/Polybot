@@ -12,7 +12,8 @@ from typing import Optional
 from .core import Tick, Portfolio, ExecutionEngine, RiskGovernor
 from .strategies import get_strategy
 from .recorder import (predicted_slugs, parse_book, winner_from_recent, extract_token,
-                       ws_best_bid_ask, WS_URI, GAMMA_API, CLOB_BOOK, WINDOW_SEC, _get_json)
+                       ws_best_bid_ask, build_tick_row, WS_URI, GAMMA_API, CLOB_BOOK,
+                       WINDOW_SEC, _get_json)
 
 
 def build_portfolio(cfg: dict, capital: float = 1000.0) -> Portfolio:
@@ -96,6 +97,10 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
             if wb <= 0 or wa <= 0:
                 continue
             pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
+            try:
+                db.insert_tick(token, ticks, build_tick_row(rem, wb, wa, book))   # record for replay/backtest
+            except Exception:
+                pass                                       # recording is best-effort; never block trading
             recent_bids.append(wb); ticks += 1
             if log and ticks == 1:
                 log.info("[LIVE]     first tick: bid=%.3f ask=%.3f rem=%.0fs", wb, wa, rem)
@@ -105,8 +110,13 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 last_hb = now
     finally:
         if recent_bids:
-            res = pf.settle(winner_from_recent(recent_bids) == "YES")
+            win = winner_from_recent(recent_bids)
+            res = pf.settle(win == "YES")
             db.log_round(session_id, res, market_id=token, ts=int(time_fn()))
+            try:
+                db.upsert_market(token, token_id=token, end_ts=end_ts, winner=win, n_ticks=ticks)
+            except Exception:
+                pass                                       # mark the recorded market replayable; best-effort
             done.add(token)
             if log:
                 log.info("[LIVE] <<< settled round %d  winner=%s  pnl=$%+.2f  cash=$%.2f  (%d ticks)",
