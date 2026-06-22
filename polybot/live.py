@@ -12,8 +12,8 @@ from typing import Optional
 from .core import Tick, Portfolio, ExecutionEngine, RiskGovernor
 from .strategies import get_strategy
 from .recorder import (predicted_slugs, parse_book, winner_from_recent, extract_token,
-                       ws_best_bid_ask, build_tick_row, WS_URI, GAMMA_API, CLOB_BOOK,
-                       WINDOW_SEC, _get_json)
+                       ws_best_bid_ask, best_bid_ask, build_tick_row, WS_URI, GAMMA_API,
+                       CLOB_BOOK, WINDOW_SEC, _get_json)
 
 
 def build_portfolio(cfg: dict, capital: float = 1000.0) -> Portfolio:
@@ -93,7 +93,7 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 strike = spot                       # fallback: first valid spot if no window-open strike
             if rem <= 0:
                 break
-            wb, wa = ws_best_bid_ask(msg, token)    # best bid/ask for OUR token (price_changes schema)
+            wb, wa = best_bid_ask(book, msg, token)  # REST book first (WS best_bid goes stale on long conns)
             if wb <= 0 or wa <= 0:
                 continue
             pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
@@ -446,7 +446,7 @@ async def _record_one_market(token, end_ts, strike, session, db, done, fetch_spo
                     break
                 if strike == 0.0 and spot > 0.0:
                     strike = spot
-                wb, wa = ws_best_bid_ask(msg, token)
+                wb, wa = best_bid_ask(book, msg, token)
                 if wb <= 0 or wa <= 0:
                     continue
                 try:

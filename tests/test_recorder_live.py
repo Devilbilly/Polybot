@@ -54,6 +54,18 @@ class TestRecorderHelpers(unittest.TestCase):
         self.assertEqual(R.ws_best_bid_ask({}, "MINE"), (0.0, 0.0))
         self.assertEqual(R.ws_best_bid_ask([], "MINE"), (0.0, 0.0))
 
+    def test_best_bid_ask_prefers_rest_book(self):
+        # the REST book (bid_p1/ask_p1) is authoritative; the WS msg is stale -> must use the book
+        book = {"bid_p1": 0.74, "ask_p1": 0.76, "ask_s1": 100}
+        stale_msg = {"price_changes": [{"asset_id": "T", "best_bid": "0.50", "best_ask": "0.51"}]}
+        self.assertEqual(R.best_bid_ask(book, stale_msg, "T"), (0.74, 0.76))
+
+    def test_best_bid_ask_falls_back_to_ws_when_book_empty(self):
+        empty_book = {"bid_p1": 0.0, "ask_p1": 0.0}
+        msg = {"price_changes": [{"asset_id": "T", "best_bid": "0.90", "best_ask": "0.91"}]}
+        self.assertEqual(R.best_bid_ask(empty_book, msg, "T"), (0.90, 0.91))
+        self.assertEqual(R.best_bid_ask({}, None, None), (0.0, 0.0))
+
     def test_ws_best_bid_ask_book_snapshot(self):
         # initial 'book' snapshot (list-wrapped): best bid = highest, best ask = lowest
         snap = [{"asset_id": "T", "bids": [{"price": "0.70", "size": "1"}, {"price": "0.72", "size": "2"}],

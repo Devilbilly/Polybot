@@ -68,6 +68,23 @@ def ws_best_bid_ask(msg, token) -> tuple:
     return 0.0, 0.0
 
 
+def best_bid_ask(book, msg=None, token=None) -> tuple:
+    """Best (bid, ask) for our token. PREFER the freshly-fetched REST L2 book (bid_p1/ask_p1):
+    the WS price_change `best_bid` goes STALE on long-lived connections (stuck at the window-open
+    ~0.50 while the real price moves), so the WS feed silently froze the recorded price. The REST
+    book reflects the true current price. Fall back to the WS message only if the book is empty."""
+    try:
+        wb = float(book.get("bid_p1", 0.0) or 0.0)
+        wa = float(book.get("ask_p1", 0.0) or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        wb = wa = 0.0
+    if wb > 0 and wa > 0:
+        return wb, wa
+    if msg is not None and token is not None:
+        return ws_best_bid_ask(msg, token)
+    return 0.0, 0.0
+
+
 def build_tick_row(rem: float, ws_bid: float, ws_ask: float, book: Dict[str, float],
                    spot: float = 0.0, strike: float = 0.0) -> Dict[str, float]:
     """Assemble a DB tick row from WS best bid/ask + a parsed L2 book (+ optional BTC spot/strike,
@@ -170,7 +187,7 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
                         rem = end_ts - time.time()           # re-sample after blocking I/O
                         if rem <= 0:
                             break
-                        wb, wa = ws_best_bid_ask(msg, token)  # current price_changes schema
+                        wb, wa = best_bid_ask(book, msg, token)  # REST book first (WS goes stale)
                         if wb <= 0 or wa <= 0:
                             continue
                         recent_bids.append(wb)
