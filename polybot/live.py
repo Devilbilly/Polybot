@@ -389,8 +389,15 @@ async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = 
             from .binance import fetch_spot, fetch_klines
         except Exception:
             fetch_spot = fetch_klines = None
-        done = set(); portfolios = {}; tasks = {}; last_hb = 0.0; last_total = 0.0
+        done = set(); portfolios = {}; tasks = {}; last_hb = 0.0; last_total = 0.0; last_bak = time.time()
         while True:
+            if time.time() - last_bak > 1800:                   # rolling 30-min DB backup (data safety)
+                try:
+                    db.backup(db_path + ".bak")
+                    log.info("[MULTI] db backed up -> %s.bak", db_path)
+                except Exception as e:
+                    log.info("[MULTI] backup failed: %s", e)
+                last_bak = time.time()
             for a in [a for a, k in tasks.items() if k.done()]:     # reap finished windows
                 tasks.pop(a, None)
             for token, end_ts, label in await discover_all_markets(session, done, log, assets):

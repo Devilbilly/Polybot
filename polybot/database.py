@@ -130,6 +130,17 @@ class Database:
         self.conn.commit()
         self.conn.close()
 
+    def backup(self, dest_path: str):
+        """Safe online backup of the live DB (uses SQLite's backup API, OK during writes).
+        Lets the trader keep a rolling copy so recorded data survives an accidental delete."""
+        self.conn.commit()
+        dst = sqlite3.connect(dest_path)
+        try:
+            with dst:
+                self.conn.backup(dst)
+        finally:
+            dst.close()
+
     # ---------- writes (used by recorder) ----------
     def upsert_market(self, market_id, slug=None, token_id=None, start_ts=None,
                       end_ts=None, winner=None, n_ticks=0):
