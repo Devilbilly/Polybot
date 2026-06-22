@@ -361,13 +361,16 @@ async def _connect_and_trade(pf, token, end_ts, strike, session, db, session_id,
             log.info("[%-4s] reconnect: %s", tag, type(e).__name__)
 
 
-async def run_multi(config_path: str = "polybot/portfolio_live.json", db_path: str = "polymarket.db",
+async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = "polymarket.db",
                     capital_per_market: float = 200.0,
                     assets=ASSET_SLUGS):  # pragma: no cover (needs live network)
-    """Trade + record MANY crypto up/down markets in parallel (one Portfolio each). Uses the
-    two-edge config by default so the BTC-spot sleeve runs on BTC; favorites run on every asset.
-    Every market's ticks are saved to the DB for replay/backtest. capital_per_market is the notional
-    PER market (aggregate exposure = capital_per_market x concurrently-open markets)."""
+    """Trade + record MANY crypto up/down markets in parallel (one Portfolio each). Defaults to the
+    FAVORITES-ONLY config: live data (iter: 69 windows/asset) showed the btc_spot_divergence sleeve
+    is a net drag (BTC -7.8% trading 8x more often at 52% win, vs favorites-only ETH/SOL/XRP all
+    green) — the spot edge validated only synthetically does NOT hold live. BTC spot is still
+    FETCHED + RECORDED (for future spot research/replay) but not traded on. Pass
+    config_path='polybot/portfolio_live.json' to re-enable the spot sleeve. capital_per_market is
+    the notional PER market (aggregate exposure = capital_per_market x concurrently-open markets)."""
     import asyncio, ssl, time, logging
     import aiohttp
     from .database import Database
