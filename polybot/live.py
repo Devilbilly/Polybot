@@ -77,7 +77,7 @@ async def _live_msg_stream(ws, session, token, end_ts, fetch_spot, time_fn):  # 
 
 
 async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_id, done,
-                            time_fn, log=None):
+                            time_fn, log=None, tag="LIVE"):
     """Consume a market's (msg, book, spot, rem) stream — same filtering + tick processing as the
     live loop — and ALWAYS settle in `finally` so a mid-market disconnect can never leak the open
     position into the next new_market(). Settlement + DB record + done-mark happen in `finally`
@@ -103,10 +103,10 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 pass                                       # recording is best-effort; never block trading
             recent_bids.append(wb); ticks += 1
             if log and ticks == 1:
-                log.info("[LIVE]     first tick: bid=%.3f ask=%.3f rem=%.0fs", wb, wa, rem)
+                log.info("[%-4s]     first tick: bid=%.3f ask=%.3f rem=%.0fs", tag, wb, wa, rem)
             elif log and (now := time_fn()) - last_hb > 30:   # in-window heartbeat every ~30s
-                log.info("[LIVE]     trading… %d ticks, last bid=%.3f, %.0fs left, cash=$%.2f",
-                         ticks, wb, rem, pf.total_cash())
+                log.info("[%-4s]     trading… %d ticks, last bid=%.3f, %.0fs left, cash=$%.2f",
+                         tag, ticks, wb, rem, pf.total_cash())
                 last_hb = now
     finally:
         if recent_bids:
@@ -119,10 +119,10 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 pass                                       # mark the recorded market replayable; best-effort
             done.add(token)
             if log:
-                log.info("[LIVE] <<< settled round %d  winner=%s  pnl=$%+.2f  cash=$%.2f  (%d ticks)",
-                         res.round_no, res.winner, res.total_pnl, res.total_cash, ticks)
+                log.info("[%-4s] <<< settled  winner=%-3s  pnl=$%+.2f  cash=$%.2f  (%d ticks)",
+                         tag, res.winner, res.total_pnl, res.total_cash, ticks)
         elif log:
-            log.info("[LIVE] <<< window ended with no valid ticks (no trade)")
+            log.info("[%-4s] <<< window ended with no valid ticks (no trade)", tag)
     return res
 
 
@@ -290,11 +290,11 @@ async def run(config_path: str = "polybot/portfolio.json",
                 # idle gap). Data flow + the 60s recv timeout still detect a genuinely dead socket.
                 async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=20, ping_timeout=None) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
-                    log.info("[LIVE]     connected + subscribed; streaming…")
+                    log.info("[%-4s]     connected + subscribed; streaming…", label.split("-")[0])
                     await _trade_one_market(
                         pf, end_ts, strike,
                         _live_msg_stream(ws, session, token, end_ts, fetch_spot, time.time),
-                        token, db, session_id, done, time.time, log)
+                        token, db, session_id, done, time.time, log, tag=label.split("-")[0])
             except Exception as e:
                 log.info("[LIVE] reconnect (%s): %s", type(e).__name__, e)
                 await asyncio.sleep(2)
@@ -355,10 +355,10 @@ async def _connect_and_trade(pf, token, end_ts, strike, session, db, session_id,
             await _trade_one_market(
                 pf, end_ts, strike,
                 _live_msg_stream(ws, session, token, end_ts, fetch_spot_fn, time.time),
-                token, db, session_id, done, time.time, log)
+                token, db, session_id, done, time.time, log, tag=tag)
     except Exception as e:
         if log:
-            log.info("[%s] reconnect: %s", tag, type(e).__name__)
+            log.info("[%-4s] reconnect: %s", tag, type(e).__name__)
 
 
 async def run_multi(config_path: str = "polybot/portfolio_live.json", db_path: str = "polymarket.db",
@@ -386,22 +386,31 @@ async def run_multi(config_path: str = "polybot/portfolio_live.json", db_path: s
             from .binance import fetch_spot, fetch_klines
         except Exception:
             fetch_spot = fetch_klines = None
-        done = set(); tasks = {}; last_hb = 0.0
+        done = set(); portfolios = {}; tasks = {}; last_hb = 0.0; last_total = 0.0
         while True:
-            for tok in [t for t, k in tasks.items() if k.done()]:   # reap finished markets
-                tasks.pop(tok, None)
+            for a in [a for a, k in tasks.items() if k.done()]:     # reap finished windows
+                tasks.pop(a, None)
             for token, end_ts, label in await discover_all_markets(session, done, log, assets):
-                if token in tasks or token in done:
+                asset = label.split("-")[0]
+                if asset in tasks or token in done:                 # one live window per asset at a time
                     continue
-                pf = build_portfolio(cfg, capital_per_market); pf.new_market()
-                is_btc = label.startswith(("btc", "bitcoin"))
+                pf = portfolios.get(asset)
+                if pf is None:                                      # persistent per-asset Portfolio
+                    pf = build_portfolio(cfg, capital_per_market); portfolios[asset] = pf
+                pf.new_market()                                     # COMPOUNDS across this asset's windows
+                is_btc = asset in ("btc", "bitcoin")
                 strike = window_open_strike(end_ts, fetch_klines) if (is_btc and fetch_klines) else 0.0
-                spot_fn = fetch_spot if is_btc else None        # spot model only valid for BTC
-                log.info("[MULTI] >>> %-26s %4.0fs left  strike=%.2f  (now trading %d markets)",
-                         label, end_ts - time.time(), strike, len(tasks) + 1)
-                tasks[token] = asyncio.create_task(
+                spot_fn = fetch_spot if is_btc else None            # spot model only valid for BTC
+                log.info("[%-4s] >>> %s  %4.0fs left  strike=%.2f  cash=$%.2f",
+                         asset, label, end_ts - time.time(), strike, pf.total_cash())
+                tasks[asset] = asyncio.create_task(
                     _connect_and_trade(pf, token, end_ts, strike, session, db, session_id, done,
                                        spot_fn, ssl_ctx, log, label))
+            if portfolios and time.time() - last_total > 60:        # running aggregate across assets
+                tot = sum(p.total_cash() for p in portfolios.values())
+                per = "  ".join(f"{a}=${p.total_cash():.2f}" for a, p in sorted(portfolios.items()))
+                log.info("[MULTI] === TOTAL $%.2f across %d assets  (%s) ===", tot, len(portfolios), per)
+                last_total = time.time()
             if not tasks and time.time() - last_hb > 30:
                 log.info("[MULTI] no open markets right now; searching… (assets=%s)", ",".join(assets))
                 last_hb = time.time()
