@@ -200,7 +200,9 @@ async def discover_market(session, done, log=None):  # pragma: no cover (network
             if not _is_btc_5m(row):
                 continue
             tok = _token_from_row(row); ets = market_end_ts(row.get("slug", ""), row)
-            if tok and tok not in done and ets and ets > now:
+            # only the CURRENTLY-OPEN window: ends in the future but within one window length
+            # (guards against grabbing a market hours/days out, which has rem >> WINDOW_SEC).
+            if tok and tok not in done and ets and now < ets <= now + WINDOW_SEC:
                 if log:
                     log.info("[LIVE] discovered via listing: slug=%s end_ts=%s", row.get("slug"), ets)
                 return tok, ets, row.get("slug", "listing")
