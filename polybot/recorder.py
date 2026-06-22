@@ -157,7 +157,7 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
             seq = 0
             recent_bids = []       # last valid YES bids -> median winner proxy (matches backtest)
             try:
-                async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
+                async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=20, ping_timeout=None) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
                     while end_ts - time.time() > 0:
                         try:

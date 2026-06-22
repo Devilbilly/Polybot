@@ -275,7 +275,10 @@ async def run(config_path: str = "polybot/portfolio.json",
             log.info("[LIVE] >>> trading %s  token=%s…  %.0fs left  strike(open)=%.2f  cash=$%.2f",
                      label, str(token)[:12], end_ts - time.time(), strike, pf.total_cash())
             try:
-                async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=25) as ws:
+                # ping_timeout=None: Polymarket's WS doesn't reliably PONG client keepalive pings,
+                # so the default 20s timeout was killing the link mid-window (premature settle +
+                # idle gap). Data flow + the 60s recv timeout still detect a genuinely dead socket.
+                async with websockets.connect(WS_URI, ssl=ssl_ctx, ping_interval=20, ping_timeout=None) as ws:
                     await ws.send(json.dumps({"assets_ids": [token], "type": "market"}))
                     log.info("[LIVE]     connected + subscribed; streaming…")
                     await _trade_one_market(
