@@ -14,7 +14,11 @@ REPO="${POLYBOT_REPO:-Devilbilly/Polybot}"
 BRANCH="${POLYBOT_BRANCH:-master}"
 DEST="${POLYBOT_DIR:-$HOME/Polybot}"
 LOG="$HOME/live_overnight.log"
-# (to run the two-edge spot config instead, change the `-m polybot.live` line below)
+MODE="${1:-single}"        # 'single' (default: one BTC market, favorites) or 'multi' (BTC/ETH/SOL/XRP, two-edge)
+case "$MODE" in
+  multi)  LAUNCH="python3 -u -m polybot.live --multi" ;;
+  *)      LAUNCH="python3 -u -m polybot.live" ;;
+esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -44,13 +48,14 @@ sleep 2
 loginctl enable-linger "$USER" 2>/dev/null && echo "[update] linger ON (survives SSH logout)" \
                                             || echo "[update] note: couldn't enable linger"
 # write a tiny supervisor that auto-restarts the bot on ANY exit, then launch it fully detached
-cat > "$DEST/supervise.sh" <<'SUP'
+echo "[update] mode: $MODE  ->  $LAUNCH"
+cat > "$DEST/supervise.sh" <<SUP
 #!/usr/bin/env bash
-cd "$(dirname "$0")"
+cd "\$(dirname "\$0")"
 while true; do
-  echo "[supervisor] $(date '+%F %T') starting bot"
-  python3 -u -m polybot.live
-  echo "[supervisor] $(date '+%F %T') bot exited ($?); restarting in 5s"
+  echo "[supervisor] \$(date '+%F %T') starting bot ($MODE)"
+  $LAUNCH
+  echo "[supervisor] \$(date '+%F %T') bot exited (\$?); restarting in 5s"
   sleep 5
 done
 SUP
