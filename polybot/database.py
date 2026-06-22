@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS ticks (
     ws_bid    REAL, ws_ask REAL,
     bid_p1 REAL, bid_s1 REAL, bid_p2 REAL, bid_s2 REAL, bid_p3 REAL, bid_s3 REAL,
     ask_p1 REAL, ask_s1 REAL, ask_p2 REAL, ask_s2 REAL, ask_p3 REAL, ask_s3 REAL,
+    spot   REAL DEFAULT 0.0, strike REAL DEFAULT 0.0,
     PRIMARY KEY (market_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_ticks_market ON ticks(market_id);
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS session_strategy (
 L2_COLS = ["bid_p2", "bid_s2", "ask_p2", "ask_s2", "bid_p3", "bid_s3", "ask_p3", "ask_s3"]
 TICK_COLS = ["rem", "ws_bid", "ws_ask",
              "bid_p1", "bid_s1", "bid_p2", "bid_s2", "bid_p3", "bid_s3",
-             "ask_p1", "ask_s1", "ask_p2", "ask_s2", "ask_p3", "ask_s3"]
+             "ask_p1", "ask_s1", "ask_p2", "ask_s2", "ask_p3", "ask_s3",
+             "spot", "strike"]   # spot/strike recorded live so the BTC-spot sleeve is replayable
 
 
 def determine_winner(ws_bid: np.ndarray) -> Optional[str]:
@@ -117,6 +119,11 @@ class Database:
         self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
+        for col in ("spot", "strike"):                 # migrate pre-spot DBs (no-op if already there)
+            try:
+                self.conn.execute(f"ALTER TABLE ticks ADD COLUMN {col} REAL DEFAULT 0.0")
+            except Exception:
+                pass
         self.conn.commit()
 
     def close(self):
@@ -204,7 +211,7 @@ class Database:
             mid = os.path.basename(f).split("_")[1].split(".")[0]
             n = len(m["ws_bid"])
             for seq in range(n):
-                self.insert_tick(mid, seq, {c: float(m[c][seq]) for c in TICK_COLS})
+                self.insert_tick(mid, seq, {c: float(m[c][seq]) for c in TICK_COLS if c in m})
             self.upsert_market(mid, token_id=mid, winner=m["winner"], n_ticks=n)  # type: ignore
             imported += 1
         self.conn.commit()

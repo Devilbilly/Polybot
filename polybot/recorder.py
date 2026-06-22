@@ -68,9 +68,11 @@ def ws_best_bid_ask(msg, token) -> tuple:
     return 0.0, 0.0
 
 
-def build_tick_row(rem: float, ws_bid: float, ws_ask: float, book: Dict[str, float]) -> Dict[str, float]:
-    """Assemble a DB tick row from WS best bid/ask + a parsed L2 book."""
-    row = {"rem": rem, "ws_bid": ws_bid, "ws_ask": ws_ask}
+def build_tick_row(rem: float, ws_bid: float, ws_ask: float, book: Dict[str, float],
+                   spot: float = 0.0, strike: float = 0.0) -> Dict[str, float]:
+    """Assemble a DB tick row from WS best bid/ask + a parsed L2 book (+ optional BTC spot/strike,
+    recorded so the spot-divergence sleeve is replayable from the DB)."""
+    row = {"rem": rem, "ws_bid": ws_bid, "ws_ask": ws_ask, "spot": spot, "strike": strike}
     for k in ("bid_p1", "bid_s1", "bid_p2", "bid_s2", "bid_p3", "bid_s3",
               "ask_p1", "ask_s1", "ask_p2", "ask_s2", "ask_p3", "ask_s3"):
         row[k] = book.get(k, 0.0)

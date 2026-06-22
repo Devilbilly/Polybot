@@ -25,12 +25,23 @@ def main():
     if not markets:
         print("  (none yet — let the live trader record some windows first)"); return
 
-    cfg_path = "polybot/portfolio.json"
-    cfg = json.load(open(cfg_path))
-    r = paper_trade(markets, cfg, capital=1000.0)
-    print("\n=== BACKTEST REPLAY of the recorded windows (favorites config) ===")
-    print(f"  ROI {r.roi_pct:+.1f}%   win {r.win_rate_pct:.0f}%   maxDD {r.max_dd_pct:.1f}%   "
-          f"over {len(markets)} windows")
+    print("\n=== BACKTEST REPLAY of the recorded windows ===")
+    print(f"  {'config':<20} {'ROI%':>8} {'win%':>6} {'maxDD%':>7}")
+    results = {}
+    for name, cfg_path in [("favorites-only", "polybot/portfolio.json"),
+                           ("two-edge (+spot)", "polybot/portfolio_live.json")]:
+        try:
+            cfg = json.load(open(cfg_path))
+            r = paper_trade(markets, cfg, capital=1000.0)
+            results[name] = r.roi_pct
+            print(f"  {name:<20} {r.roi_pct:>+8.1f} {r.win_rate_pct:>6.0f} {r.max_dd_pct:>7.1f}")
+        except Exception as e:
+            print(f"  {name:<20} (skipped: {e})")
+    if "favorites-only" in results and "two-edge (+spot)" in results:
+        diff = results["two-edge (+spot)"] - results["favorites-only"]
+        verdict = "HELPS" if diff > 0 else "HURTS" if diff < 0 else "neutral"
+        print(f"\n  => the BTC-spot sleeve {verdict} on recorded data "
+              f"({diff:+.1f}pp ROI vs favorites-only). [spot fires only on BTC windows]")
 
     # live paper P&L as the trader actually booked it (sessions table)
     db = Database(db_path)

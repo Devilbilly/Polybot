@@ -98,7 +98,7 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 continue
             pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
             try:
-                db.insert_tick(token, ticks, build_tick_row(rem, wb, wa, book))   # record for replay/backtest
+                db.insert_tick(token, ticks, build_tick_row(rem, wb, wa, book, spot=spot, strike=strike))
             except Exception:
                 pass                                       # recording is best-effort; never block trading
             recent_bids.append(wb); ticks += 1
