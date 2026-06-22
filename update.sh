@@ -38,16 +38,31 @@ cp -r "$SRC/polybot" "$DEST/"
 
 echo "[update] updated. ping fix present (want 1): $(grep -c 'ping_timeout=None' "$DEST/polybot/live.py")"
 
-echo "[update] restarting live trader ..."
-pkill -f "polybot[.]live" 2>/dev/null || true
+echo "[update] restarting (supervised; survives logout + auto-restarts on crash) ..."
+pkill -9 -f "polybot" 2>/dev/null || true        # kill old bot + supervisor
 sleep 2
-cd "$DEST"
-setsid nohup python3 -m polybot.live > "$LOG" 2>&1 </dev/null &
-sleep 8
+loginctl enable-linger "$USER" 2>/dev/null && echo "[update] linger ON (survives SSH logout)" \
+                                            || echo "[update] note: couldn't enable linger"
+# write a tiny supervisor that auto-restarts the bot on ANY exit, then launch it fully detached
+cat > "$DEST/supervise.sh" <<'SUP'
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+while true; do
+  echo "[supervisor] $(date '+%F %T') starting bot"
+  python3 -u -m polybot.live
+  echo "[supervisor] $(date '+%F %T') bot exited ($?); restarting in 5s"
+  sleep 5
+done
+SUP
+chmod +x "$DEST/supervise.sh"
+setsid nohup bash "$DEST/supervise.sh" >> "$LOG" 2>&1 </dev/null &
+disown 2>/dev/null || true
+sleep 12
 if pgrep -af "[m] polybot.live" | grep -q python; then
-  echo "[update] RUNNING:"; pgrep -af "[m] polybot.live" | grep python
+  echo "[update] RUNNING (supervised):"; pgrep -af "polybot" | grep -vi "pgrep\|update.sh" | head -3
 else
   echo "[update] NOT RUNNING — check $LOG"
 fi
+echo "[update] watch:  tail -f $LOG      stop:  pkill -9 -f polybot"
 echo "[update] --- recent log ---"
 tail -10 "$LOG"
