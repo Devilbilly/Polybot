@@ -186,8 +186,11 @@ class TestSpotDegradationGuards(unittest.TestCase):
                         "confirmation sleeve must trade the favorite when spot is unavailable")
 
 
-def _msg(bid, ask, rem, spot=0.0, etype="price_change"):
-    return ({"event_type": etype, "best_bid": bid, "best_ask": ask},
+def _msg(bid, ask, rem, spot=0.0, token="TKN"):
+    # CURRENT Polymarket schema: per-asset quotes nested in a price_changes array.
+    return ({"event_type": "price_change",
+             "price_changes": [{"asset_id": token, "best_bid": bid, "best_ask": ask,
+                                "price": bid, "size": "100", "side": "BUY"}]},
             {"bid_p1": bid, "bid_s1": 1e6, "ask_p1": ask, "ask_s1": 1e6}, spot, rem)
 
 
@@ -245,14 +248,13 @@ class TestTradeOneMarketLoop(unittest.TestCase):
         self.assertEqual(db.rounds, [])
         self.assertNotIn("TKN", done)
 
-    def test_invalid_and_off_type_messages_filtered(self):
-        # wrong event_type and non-positive bid/ask must be skipped (no trade), like the live loop
+    def test_invalid_and_off_token_messages_filtered(self):
+        # quotes for a DIFFERENT token, and non-positive bid/ask, must be skipped (no trade)
         pf, db, done, coro = self._run(_aiter([
-            _msg(0.84, 0.85, rem=120, etype="book"),     # wrong event type -> skip
+            _msg(0.84, 0.85, rem=120, token="OTHER"),    # quote for another asset -> skip
             _msg(0.0, 0.0, rem=110),                      # non-positive -> skip
-            _msg(0.95, 0.96, rem=100),                    # valid -> the only processed tick
+            _msg(0.95, 0.96, rem=100),                    # valid (token TKN) -> the only processed tick
             _msg(0.95, 0.96, rem=5)]))
-        start_cash = 1000.0
         res = asyncio.run(coro)
         self.assertIsNotNone(res)                          # the one valid tick traded + settled
         self.assertEqual(len(db.rounds), 1)

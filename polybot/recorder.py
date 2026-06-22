@@ -37,6 +37,37 @@ def parse_book(book: dict) -> Dict[str, float]:
     return rec
 
 
+def ws_best_bid_ask(msg, token) -> tuple:
+    """Best (bid, ask) for `token` from a Polymarket market-channel WS message.
+
+    CURRENT schema (2026): a price_change message nests per-asset quotes in a `price_changes`
+    array — {"event_type":"price_change","price_changes":[{"asset_id":…,"best_bid":…,"best_ask":…}]}
+    — NOT flat top-level best_bid/best_ask (the old shape the bot was written against). Also reads
+    the initial 'book' snapshot ({"asset_id":…,"bids":[{price,size}],"asks":[…]}). Returns
+    (0.0, 0.0) when this token isn't quoted in the message."""
+    items = msg if isinstance(msg, list) else [msg]
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        pcs = it.get("price_changes")
+        if isinstance(pcs, list):
+            for pc in pcs:
+                if isinstance(pc, dict) and pc.get("asset_id") == token:
+                    try:
+                        return float(pc.get("best_bid") or 0), float(pc.get("best_ask") or 0)
+                    except (TypeError, ValueError):
+                        return 0.0, 0.0
+        elif it.get("asset_id") == token and ("bids" in it or "asks" in it):
+            try:
+                bids = it.get("bids") or []; asks = it.get("asks") or []
+                bb = max((float(b["price"]) for b in bids), default=0.0)
+                ba = min((float(a["price"]) for a in asks), default=0.0)
+                return bb, ba
+            except (TypeError, ValueError, KeyError):
+                return 0.0, 0.0
+    return 0.0, 0.0
+
+
 def build_tick_row(rem: float, ws_bid: float, ws_ask: float, book: Dict[str, float]) -> Dict[str, float]:
     """Assemble a DB tick row from WS best bid/ask + a parsed L2 book."""
     row = {"rem": rem, "ws_bid": ws_bid, "ws_ask": ws_ask}
@@ -133,19 +164,15 @@ async def record(db_path: str = "polymarket.db"):  # pragma: no cover (needs liv
                             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
                         except asyncio.TimeoutError:
                             continue
-                        items = msg if isinstance(msg, list) else [msg]
                         book = parse_book(await _get_json(session, CLOB_BOOK.format(token), timeout=3) or {})
                         rem = end_ts - time.time()           # re-sample after blocking I/O
                         if rem <= 0:
                             break
-                        for it in items:
-                            if it.get("event_type") not in ("price_change", "best_bid_ask"):
-                                continue
-                            wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
-                            if wb <= 0 or wa <= 0:
-                                continue
-                            recent_bids.append(wb)
-                            db.insert_tick(token, seq, build_tick_row(rem, wb, wa, book)); seq += 1
+                        wb, wa = ws_best_bid_ask(msg, token)  # current price_changes schema
+                        if wb <= 0 or wa <= 0:
+                            continue
+                        recent_bids.append(wb)
+                        db.insert_tick(token, seq, build_tick_row(rem, wb, wa, book)); seq += 1
             except Exception:
                 await asyncio.sleep(2)
             finally:

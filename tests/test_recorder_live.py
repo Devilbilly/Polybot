@@ -40,6 +40,26 @@ class TestRecorderHelpers(unittest.TestCase):
         self.assertEqual(R.winner_from_last(0.1), "NO")
         self.assertIsNone(R.winner_from_last(0.0))
 
+    def test_ws_best_bid_ask_price_changes_schema(self):
+        # the REAL 2026 schema: per-asset quotes nested in a price_changes array
+        msg = {"event_type": "price_change", "market": "0xabc", "price_changes": [
+            {"asset_id": "NO_TOK", "best_bid": "0.02", "best_ask": "0.03"},
+            {"asset_id": "YES_TOK", "best_bid": "0.97", "best_ask": "0.98"}]}
+        self.assertEqual(R.ws_best_bid_ask(msg, "YES_TOK"), (0.97, 0.98))
+        self.assertEqual(R.ws_best_bid_ask(msg, "NO_TOK"), (0.02, 0.03))
+
+    def test_ws_best_bid_ask_absent_token_returns_zero(self):
+        msg = {"price_changes": [{"asset_id": "OTHER", "best_bid": "0.5", "best_ask": "0.51"}]}
+        self.assertEqual(R.ws_best_bid_ask(msg, "MINE"), (0.0, 0.0))
+        self.assertEqual(R.ws_best_bid_ask({}, "MINE"), (0.0, 0.0))
+        self.assertEqual(R.ws_best_bid_ask([], "MINE"), (0.0, 0.0))
+
+    def test_ws_best_bid_ask_book_snapshot(self):
+        # initial 'book' snapshot (list-wrapped): best bid = highest, best ask = lowest
+        snap = [{"asset_id": "T", "bids": [{"price": "0.70", "size": "1"}, {"price": "0.72", "size": "2"}],
+                 "asks": [{"price": "0.75", "size": "1"}, {"price": "0.74", "size": "2"}]}]
+        self.assertEqual(R.ws_best_bid_ask(snap, "T"), (0.72, 0.74))
+
     def test_winner_from_recent_median(self):
         self.assertEqual(R.winner_from_recent([0.9, 0.92, 0.95, 0.96, 0.94]), "YES")
         self.assertEqual(R.winner_from_recent([0.1, 0.08, 0.05]), "NO")

@@ -12,7 +12,7 @@ from typing import Optional
 from .core import Tick, Portfolio, ExecutionEngine, RiskGovernor
 from .strategies import get_strategy
 from .recorder import (predicted_slugs, parse_book, winner_from_recent, extract_token,
-                       WS_URI, GAMMA_API, CLOB_BOOK, WINDOW_SEC, _get_json)
+                       ws_best_bid_ask, WS_URI, GAMMA_API, CLOB_BOOK, WINDOW_SEC, _get_json)
 
 
 def build_portfolio(cfg: dict, capital: float = 1000.0) -> Portfolio:
@@ -92,20 +92,17 @@ async def _trade_one_market(pf, end_ts, strike, msg_stream, token, db, session_i
                 strike = spot                       # fallback: first valid spot if no window-open strike
             if rem <= 0:
                 break
-            for it in (msg if isinstance(msg, list) else [msg]):
-                if it.get("event_type") not in ("price_change", "best_bid_ask"):
-                    continue
-                wb = float(it.get("best_bid") or 0); wa = float(it.get("best_ask") or 0)
-                if wb <= 0 or wa <= 0:
-                    continue
-                pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
-                recent_bids.append(wb); ticks += 1
-                if log and ticks == 1:
-                    log.info("[LIVE]     first tick: bid=%.3f ask=%.3f rem=%.0fs", wb, wa, rem)
-                elif log and (now := time_fn()) - last_hb > 30:   # in-window heartbeat every ~30s
-                    log.info("[LIVE]     trading… %d ticks, last bid=%.3f, %.0fs left, cash=$%.2f",
-                             ticks, wb, rem, pf.total_cash())
-                    last_hb = now
+            wb, wa = ws_best_bid_ask(msg, token)    # best bid/ask for OUR token (price_changes schema)
+            if wb <= 0 or wa <= 0:
+                continue
+            pf.process_tick(live_tick(rem, wb, wa, book, spot=spot, strike=strike))
+            recent_bids.append(wb); ticks += 1
+            if log and ticks == 1:
+                log.info("[LIVE]     first tick: bid=%.3f ask=%.3f rem=%.0fs", wb, wa, rem)
+            elif log and (now := time_fn()) - last_hb > 30:   # in-window heartbeat every ~30s
+                log.info("[LIVE]     trading… %d ticks, last bid=%.3f, %.0fs left, cash=$%.2f",
+                         ticks, wb, rem, pf.total_cash())
+                last_hb = now
     finally:
         if recent_bids:
             res = pf.settle(winner_from_recent(recent_bids) == "YES")
