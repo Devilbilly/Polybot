@@ -43,8 +43,15 @@ cp -r "$SRC/polybot" "$DEST/"
 echo "[update] updated. ping fix present (want 1): $(grep -c 'ping_timeout=None' "$DEST/polybot/live.py")"
 
 echo "[update] restarting (supervised; survives logout + auto-restarts on crash) ..."
-pkill -9 -f "polybot" 2>/dev/null || true        # kill old bot + supervisor
+# kill SUPERVISORS first (else they respawn a bot), then the bots. Two patterns because the
+# supervisor cmdline has capital-P 'Polybot' (case-sensitive) while the bot has 'polybot.live'.
+pkill -9 -f "supervise.sh" 2>/dev/null || true
+sleep 1
+pkill -9 -f "polybot.live" 2>/dev/null || true
 sleep 2
+pkill -9 -f "supervise.sh" 2>/dev/null || true   # belt-and-suspenders: catch any respawn race
+pkill -9 -f "polybot.live" 2>/dev/null || true
+sleep 1
 loginctl enable-linger "$USER" 2>/dev/null && echo "[update] linger ON (survives SSH logout)" \
                                             || echo "[update] note: couldn't enable linger"
 # write a tiny supervisor that auto-restarts the bot on ANY exit, then launch it fully detached
