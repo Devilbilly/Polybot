@@ -25,6 +25,9 @@ inflight = [0, 0.0]                                 # [open_positions, cost_in_f
 for coin, side, fp, sh, ts, win in rows:
     coin = coin if coin in COINS else "?"
     fp = float(fp or 0); sh = float(sh or 0); cost = fp * sh
+    if fp <= 0 or sh <= 0:
+        continue   # PHANTOM: a failed/rejected real order (ERR / stale) was logged with price=0 /
+                   # shares=0 — no money moved. Counting it scored free "$1 wins" (fabricated P&L).
     a = life[coin]
     a[0] += 1; a[1] += cost
     if ts and ts >= HR:
@@ -50,6 +53,21 @@ try:
     ba = cl.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
     b = ba.get("balance")
     bal = float(b) / 1e6 if b not in (None, "") else None
+except Exception:
+    pass
+
+# Polymarket data-api: open-positions mark-to-market value (matches the web UI portfolio)
+port_val = None
+try:
+    import json as _j
+    import urllib.request as _u
+    fnd = open("/home/palacedeforsaken/.config/polybot-clob.funder").read().strip()
+    r = _j.load(_u.urlopen(_u.Request("https://data-api.polymarket.com/value?user=%s" % fnd,
+                headers={"User-Agent": "Mozilla"}), timeout=10))
+    if isinstance(r, list) and r:
+        port_val = float(r[0].get("value"))
+    elif isinstance(r, dict):
+        port_val = float(r.get("value"))
 except Exception:
     pass
 
@@ -84,8 +102,9 @@ def delta(now, ref):
     return '<span style="color:%s">%+.2f</span>' % (col, d)
 
 
-# account value estimate = cash + open positions valued at cost (conservative)
-acct = (bal + inflight[1]) if bal is not None else None
+# account value = cash + open positions (Polymarket mark-to-market if available, else cost) = the web-UI portfolio
+positions_val = port_val if port_val is not None else inflight[1]
+acct = (bal + positions_val) if bal is not None else None
 
 H = []
 H.append('<div style="font-family:Menlo,Consolas,monospace;font-size:13px;max-width:900px">')
@@ -100,7 +119,7 @@ H.append('<table style="border-collapse:collapse;margin:6px 0" border=1 cellpadd
          '<td style="text-align:right;color:%s"><b>%+.2f</b></td>'
          '<td style="text-align:right">%s</td></tr></table>'
          % (money(bal), delta(bal, first_bal), delta(bal, prev_bal),
-            inflight[0], money(inflight[1]),
+            inflight[0], money(positions_val),
             ('#0a7d27' if realized >= 0 else '#c0271a'), realized, money(acct)))
 H.append('<p style="color:#888">Cash dips when capital is deployed into open positions and recovers as '
          'winners settle &mdash; the real scorecard is <b>realized P&amp;L</b> (settled trades). '

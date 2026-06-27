@@ -136,15 +136,20 @@ class ClobExecutor(Executor):
                 return Fill("", side, 0.0, 0.0, status="REJECTED:price")
             if float(px) < self.min_price:                   # favorites only; never chase longshots
                 return Fill("", side, 0.0, 0.0, status=f"REJECTED:longshot({float(px):.2f})")
-            tick = self._tick(tok)
+            # Snap the limit to >= 1-cent granularity: integer-shares x a 2-decimal price keeps the
+            # maker amount on whole cents (Polymarket caps maker at 2 decimals). A 1c price is valid on
+            # every market tick (0.1/0.01/0.001/0.0001), so this also fixes "invalid amounts" on fine-tick markets.
+            tick = max(self._tick(tok), 0.01)
             raw = min(1.0 - tick, float(px) + self.price_buffer_ticks * tick)   # marketable: cross the spread
-            limit = round(round(raw / tick) * tick, 6)
+            limit = round(round(raw / tick) * tick, 2)
             order_shares = self._size_for(limit)             # integer shares ~ $1
             args = OrderArgs(token_id=tok, price=limit, size=order_shares, side=BUY)
             if self.dry_run:
                 self.client.create_order(args)               # builds + SIGNS, posts nothing
                 return Fill("dryrun", side, order_shares, limit, status="DRYRUN")
-            resp = self.client.create_and_post_order(args, order_type="FOK") or {}
+            # FAK (fill-and-kill / IOC): take whatever is immediately available, cancel the rest. FOK
+            # (all-or-nothing) was killing ~5% of orders as "couldn't be fulfilled" on thin 5-min books.
+            resp = self.client.create_and_post_order(args, order_type="FAK") or {}
             ok = bool(resp.get("success"))
             making = float(resp.get("makingAmount") or 0.0)  # USDC spent
             taking = float(resp.get("takingAmount") or 0.0)  # shares received
@@ -156,7 +161,10 @@ class ClobExecutor(Executor):
                         shares=(taking or order_shares), price=fill_px, fee=0.0,
                         tx_hash=(txs[0] if txs else None), status=status)
         except Exception as e:
-            return Fill(order_id="", side=side, shares=float(shares or 0), price=0.0,
+            # shares=0.0 (NOT the requested size): a failed order filled NOTHING. Returning the
+            # requested shares with price=0 created "phantom fills" that the P&L scorer counted as
+            # free $1 winners (fabricated profit). A failed order must report zero filled shares.
+            return Fill(order_id="", side=side, shares=0.0, price=0.0,
                         status=f"ERR:{type(e).__name__}:{str(e)[:80]}")
 
 
