@@ -1,14 +1,8 @@
 {
-    "_comment": "Favorites-only backtest/small-account config. SIZING (iter 47-48): bullet_pct 0.02->0.025 after an OOS sizing sweep (research_sizing.py) showed 2% was below the geometric-growth-optimal for a small account (geo-growth/mkt rises 0.29->0.41% as size goes 2->3%; arith Sharpe/mkt flat ~0.398 => classic below-Kelly under-betting, not leverage). TAIL-AWARE CHOICE: sized via the WORST-CASE Monte-Carlo ordering (not a single path) — across 2000 random orderings, worst-DD is 2.0%:17.2% / 2.5%:21.1% / 3.0%:24.7-25.2%. 3.0% rides/occasionally trips the 25% kill-switch; 2.5% keeps a buffer with 0 kills/2000 and ~4x the mean ROI of 2%. Kept fractional-Kelly (growth-optimal ~0.06+) for estimation-error safety — this bot blew up once from overconfidence. SCOPE: small-account effect ONLY; benefit collapses above ~$10k as thin-book caps bind (+2345pp@$1k -> +15pp@$100k), matching the $1-10k edge capacity. DE-RISKING (iter 49): soft_dd=0.15 adds graceful linear bet-shrinking once MTM drawdown exceeds 15% (toward 0 at the 25% kill) — strictly-safer (multiplier<=1), confirmed FREE on the normal path (identical ROI/DD; normal DD ~6-9% never reaches 15%), cushioning only the rare bad-ordering tail before the hard kill. research_softdd.py: at 3% it held worst-DD ~12.5% (6 shuffles) vs ~25% un-derisked — promising for future size-up, but NOT deployed at 3% (6 shuffles is too thin a tail; soft_dd needs sequential, so a 2000-ordering tail is ~19h, infeasible). Raise toward 0.03 ONLY with explicit tolerance for a ~25% worst-case drawdown.",
+    "_comment": "SINGLE-EDGE config (2026-06-26). Only fav_hold = behavioural favorite-longshot edge (buy 0.70-0.93, hold to settle, NO stop; live-confirmed +EV, +$700+ over 400+ trades, ~84% win). The spot/btc_spot_divergence sleeve was REJECTED live (19 trades, 15% win, -$74): offline assumed the Polymarket book LAGS the spot model, but LIVE the market is FASTER than the simple lognormal model, so trading the divergence loses. Two-edge backup kept on the box as portfolio.json history; favonly == this file. CLUE worth an offline check: 15% ~= inverse of an 85% favorite -> spot may be systematically wrong-sided, so FADING the model (flip the signal) might be +EV.",
     "strategies": [
-        {"id": "fav_early", "name": "scale_in_favorite", "weight": 0.40,
-         "params": {"buy_p": 0.60, "sell_p": 0.80, "time_cutoff": 0.40, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.025, "lookback": 50, "min_rise": 0.02}},
-        {"id": "fav_main", "name": "scale_in_favorite", "weight": 0.40,
-         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.50, "max_buy": 2, "add_gap": 0.04, "bullet_pct": 0.025, "lookback": 50, "min_rise": 0.02}},
-        {"id": "fav_late", "name": "fav_convergence", "weight": 0.10,
-         "params": {"buy_p": 0.85, "sell_p": 0.96, "time_cutoff": 0.70, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.025}},
-        {"id": "fav_final", "name": "fav_convergence", "weight": 0.10,
-         "params": {"buy_p": 0.90, "sell_p": 0.97, "time_cutoff": 0.85, "stop_p": 0.50, "max_buy": 1, "bullet_pct": 0.025}}
+        {"id": "fav_hold", "name": "fav_convergence", "weight": 1.0,
+         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.0, "max_buy": 1, "bullet_pct": 0.025}}
     ],
     "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true},
     "risk": {"kill_switch_dd": 0.25, "soft_dd": 0.15, "round_loss_limit": 0.08, "min_capital": 50.0}

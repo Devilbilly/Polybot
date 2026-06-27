@@ -66,6 +66,19 @@ class TestRecorderHelpers(unittest.TestCase):
         self.assertEqual(R.best_bid_ask(empty_book, msg, "T"), (0.90, 0.91))
         self.assertEqual(R.best_bid_ask({}, None, None), (0.0, 0.0))
 
+    def test_carry_book_keeps_last_when_fresh_empty(self):
+        good = {"bid_p1": 0.74, "ask_p1": 0.76}
+        # a fresh empty fetch (rate-limited -> {}) must NOT clobber the last good book
+        self.assertEqual(R.carry_book({}, good), good)
+        self.assertEqual(R.carry_book({"bid_p1": 0.0, "ask_p1": 0.0}, good), good)
+        # a fresh good fetch replaces it
+        newer = {"bid_p1": 0.80, "ask_p1": 0.82}
+        self.assertEqual(R.carry_book(newer, good), newer)
+        # one-sided fresh book still counts as real (not empty)
+        self.assertEqual(R.carry_book({"bid_p1": 0.9, "ask_p1": 0.0}, good), {"bid_p1": 0.9, "ask_p1": 0.0})
+        # no prior book + empty fresh -> empty dict (best_bid_ask then uses WS for that one tick)
+        self.assertEqual(R.carry_book({}, {}), {})
+
     def test_ws_best_bid_ask_book_snapshot(self):
         # initial 'book' snapshot (list-wrapped): best bid = highest, best ask = lowest
         snap = [{"asset_id": "T", "bids": [{"price": "0.70", "size": "1"}, {"price": "0.72", "size": "2"}],

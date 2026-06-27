@@ -85,6 +85,19 @@ def best_bid_ask(book, msg=None, token=None) -> tuple:
     return 0.0, 0.0
 
 
+def carry_book(fresh, last):
+    """Carry forward the last good L2 book when a fresh REST fetch came back empty.
+
+    The CLOB /book endpoint rate-limits under 4-asset live load and returns {} ~half the time;
+    an empty book would otherwise force best_bid_ask onto the STALE WS best_bid (~0.50), which
+    silently corrupted ~50% of recorded prices. Prefer `fresh` when it carries a real bid/ask;
+    otherwise keep `last` (a 1-second-old real price beats a frozen 0.50)."""
+    if isinstance(fresh, dict) and (float(fresh.get("bid_p1", 0) or 0) > 0
+                                    or float(fresh.get("ask_p1", 0) or 0) > 0):
+        return fresh
+    return last if isinstance(last, dict) else {}
+
+
 def build_tick_row(rem: float, ws_bid: float, ws_ask: float, book: Dict[str, float],
                    spot: float = 0.0, strike: float = 0.0) -> Dict[str, float]:
     """Assemble a DB tick row from WS best bid/ask + a parsed L2 book (+ optional BTC spot/strike,
@@ -121,6 +134,26 @@ def extract_token(ev) -> Optional[str]:
         if ids:
             return ids[0]
     return None
+
+
+def extract_token_pair(ev):
+    """(yes_token, no_token) from a gamma event payload. clobTokenIds is [Up/Yes, Down/No]
+    (verified against live markets); no_token is None if only one id present. Lets live.py place
+    the complementary NO order (buy the Down token) without a separate WS subscription."""
+    if not ev or not isinstance(ev, (list, tuple)) or not isinstance(ev[0], dict):
+        return (None, None)
+    for m in ev[0].get("markets", []):
+        if not isinstance(m, dict):
+            continue
+        ids = m.get("clobTokenIds")
+        if isinstance(ids, str):
+            try:
+                ids = json.loads(ids)
+            except Exception:
+                ids = []
+        if ids:
+            return (ids[0], ids[1] if len(ids) > 1 else None)
+    return (None, None)
 
 
 def winner_from_recent(recent_bids) -> Optional[str]:

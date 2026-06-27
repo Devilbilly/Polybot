@@ -28,3 +28,5 @@ htmlcov/
 # local tooling state
 .claude/
 .remember/
+*.cred
+*.key
