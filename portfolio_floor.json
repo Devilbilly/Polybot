@@ -1,0 +1,9 @@
+{
+    "_comment": "A/B VARIANT (2026-06-28) — NOT deployed. Identical to portfolio.json EXCEPT buy_p 0.70->0.78, to test skipping the weak 0.70-0.78 favorites (motivated by the eth 0.70-0.85 band running cold). Backtest on 281 clean markets: same total return (+29.6%) as 0.70 but higher win-rate (88.5% vs 84.9%) and more balanced halves (less variance) — a marginal consistency gain, NOT a return gain. The LIVE bot keeps portfolio.json (buy_p=0.70); this file is for offline/paper comparison only.",
+    "strategies": [
+        {"id": "fav_hold", "name": "fav_convergence", "weight": 1.0,
+         "params": {"buy_p": 0.78, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.0, "max_buy": 1, "bullet_pct": 0.025}}
+    ],
+    "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true},
+    "risk": {"kill_switch_dd": 0.25, "soft_dd": 0.15, "round_loss_limit": 0.08, "min_capital": 50.0}
+}
