@@ -375,7 +375,7 @@ if btc[3] >= 15:
                    f'{alt_wr:.0f}% &mdash; it sits on its breakeven (efficient book, minimal '
                    f'favorite-longshot edge), contributing little PnL for a full capital share. '
                    f'Reallocate its weight to eth/sol/xrp, or restrict BTC to the highest-confidence '
-                   f'price band only. (See the dedicated BTC root-cause section below.)')
+                   f'price band only.')
 # sell_p tweak (from prior sweep)
 sug.append('<b>sell_p 0.93&rarr;0.96</b> was a strict win%+ROI improvement in the backtester sweep '
            '&mdash; the safest live tweak; consider after a few more clean days.')
@@ -397,8 +397,6 @@ for s in sug:
     add(f'<li style="margin:4px 0">{s}</li>')
 add('</ol>')
 
-add('<p id="btc-rootcause-anchor" style="color:#888">&#8595; A dedicated BTC root-cause investigation '
-    'is appended below.</p>')
 add('</div>')
 
 sys.stdout.write("\n".join(H))
