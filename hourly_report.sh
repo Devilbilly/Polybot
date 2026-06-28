@@ -25,7 +25,8 @@ PY'
   python3 hourly_ab.py archive/recent_market_data.db > ab_hourly_fragment.html
   python3 coinflip_gate.py archive/recent_market_data.db archive/ledger.db 12 > coinflip_fragment.html
   python3 oos_validate.py archive/recent_market_data.db > oos_fragment.html
-  python3 merge_report.py polybot_report.html polybot_report.html ab_hourly_fragment.html coinflip_fragment.html oos_fragment.html
+  ssh $O "$B" 'python3 ~/Polybot/analyze_hour.py 3600 2>/dev/null || python3 /usr/local/bin/analyze_hour.py 3600 2>/dev/null' > analyze_fragment.html
+  python3 merge_report.py polybot_report.html polybot_report.html ab_hourly_fragment.html coinflip_fragment.html oos_fragment.html analyze_fragment.html
 } || echo "[hourly_report] OOS step skipped (non-fatal)"
 mkdir -p archive/reports
 TS=$(date -u +%Y%m%dT%H%M%SZ)
