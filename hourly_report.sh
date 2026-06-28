@@ -15,8 +15,9 @@ d=sqlite3.connect("/tmp/md_oos.bak"); s.backup(d); d.close(); s.close()
 PY'
   scp $O "$B:/tmp/md_oos.bak" archive/recent_market_data.db
   ssh $O "$B" 'rm -f /tmp/md_oos.bak'
+  python3 hourly_ab.py archive/recent_market_data.db > ab_hourly_fragment.html
   python3 oos_validate.py archive/recent_market_data.db > oos_fragment.html
-  python3 merge_report.py polybot_report.html polybot_report.html oos_fragment.html
+  python3 merge_report.py polybot_report.html polybot_report.html ab_hourly_fragment.html oos_fragment.html
 } || echo "[hourly_report] OOS step skipped (non-fatal)"
 mkdir -p archive/reports
 TS=$(date -u +%Y%m%dT%H%M%SZ)
