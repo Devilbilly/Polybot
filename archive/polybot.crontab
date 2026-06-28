@@ -1,0 +1,6 @@
+HOME=/nfs/home/billy
+PATH=/usr/local/bin:/usr/bin:/bin
+# Polybot durable data archive — pull box DBs + merge into master_polybot.db every 3h.
+# The box prunes market_data.db/polymarket.db to 48h, so this MUST run < every 48h or live data
+# (the only record of the live edge/regimes) is lost. archive_merge dedups -> safe at any cadence.
+0 */3 * * * cd /nfs/home/billy/test_poly_v2 && /usr/bin/bash archive_pull_merge.sh >> archive/cron_pull.log 2>&1
