@@ -15,9 +15,17 @@ d=sqlite3.connect("/tmp/md_oos.bak"); s.backup(d); d.close(); s.close()
 PY'
   scp $O "$B:/tmp/md_oos.bak" archive/recent_market_data.db
   ssh $O "$B" 'rm -f /tmp/md_oos.bak'
+  ssh $O "$B" 'python3 - <<PY
+import sqlite3
+s=sqlite3.connect("/home/palacedeforsaken/Polybot/ledger.db",timeout=60); s.execute("PRAGMA busy_timeout=60000")
+d=sqlite3.connect("/tmp/led.bak"); s.backup(d); d.close(); s.close()
+PY'
+  scp $O "$B:/tmp/led.bak" archive/ledger.db
+  ssh $O "$B" 'rm -f /tmp/led.bak'
   python3 hourly_ab.py archive/recent_market_data.db > ab_hourly_fragment.html
+  python3 coinflip_gate.py archive/recent_market_data.db archive/ledger.db 12 > coinflip_fragment.html
   python3 oos_validate.py archive/recent_market_data.db > oos_fragment.html
-  python3 merge_report.py polybot_report.html polybot_report.html ab_hourly_fragment.html oos_fragment.html
+  python3 merge_report.py polybot_report.html polybot_report.html ab_hourly_fragment.html coinflip_fragment.html oos_fragment.html
 } || echo "[hourly_report] OOS step skipped (non-fatal)"
 mkdir -p archive/reports
 TS=$(date -u +%Y%m%dT%H%M%SZ)
