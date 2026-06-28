@@ -17,6 +17,58 @@ DB = "/home/palacedeforsaken/Polybot/polymarket.db"
 LOG = "/home/palacedeforsaken/live_overnight.log"
 CFG = "/home/palacedeforsaken/Polybot/polybot/portfolio.json"
 HOURS = int(sys.argv[1]) if len(sys.argv) > 1 else 12
+LED = "/home/palacedeforsaken/Polybot/ledger.db"
+CREDS = "/home/palacedeforsaken/.config"
+DEPOSIT_START = 118.57   # first real-money balance read = deposit baseline
+
+
+def realmoney():
+    """Account ground truth (cash + Polymarket positions) + per-coin REAL fills from the ledger."""
+    cash = posval = None
+    try:
+        from eth_account import Account  # noqa: F401
+        from py_clob_client_v2 import ClobClient
+        from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
+        key = open(CREDS + "/polybot-clob.key").read().strip()
+        funder = open(CREDS + "/polybot-clob.funder").read().strip()
+        cl = ClobClient("https://clob.polymarket.com", 137, key=key, signature_type=3, funder=funder)
+        cl.set_api_creds(cl.derive_api_key())
+        b = cl.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)).get("balance")
+        cash = float(b) / 1e6 if b not in (None, "") else None
+        import json
+        import urllib.request
+        for _ in range(3):
+            try:
+                r = json.load(urllib.request.urlopen(urllib.request.Request(
+                    "https://data-api.polymarket.com/value?user=%s" % funder,
+                    headers={"User-Agent": "Mozilla"}), timeout=8))
+                posval = float(r[0]["value"]) if (isinstance(r, list) and r) else float(r.get("value"))
+                break
+            except Exception:
+                time.sleep(1)
+    except Exception:
+        pass
+    per = defaultdict(lambda: [0, 0.0, 0, 0, 0.0])   # coin -> fills,spent,settled,wins,realized
+    hr = [0, 0.0]
+    try:
+        lc = sqlite3.connect("file:%s?mode=ro" % LED, uri=True)
+        mx = lc.execute("SELECT MAX(ts) FROM ledger").fetchone()[0] or 0
+        for coin, side, fp, shv, ts, win in lc.execute(
+                "SELECT f.coin,f.side,f.fill_price,f.fill_shares,f.ts,s.winner FROM ledger f "
+                "LEFT JOIN ledger s ON s.trade_id=f.trade_id AND s.event='SETTLE' "
+                "WHERE f.event='FILL' AND f.mode='LIVE' AND f.fill_price>0"):
+            coin = coin if coin in ("btc", "eth", "sol", "xrp") else "?"
+            fp = float(fp or 0); shv = float(shv or 0); cost = fp * shv
+            a = per[coin]; a[0] += 1; a[1] += cost
+            if ts and ts >= mx - 3600:
+                hr[0] += 1; hr[1] += cost
+            if win:
+                pay = shv if side == win else 0.0
+                a[2] += 1; a[3] += 1 if side == win else 0; a[4] += pay - cost
+        lc.close()
+    except Exception:
+        pass
+    return cash, posval, per, hr
 
 
 def _sleeves():
@@ -119,6 +171,42 @@ def main():
     th = "padding:6px 8px;text-align:right;font-size:13px;border-bottom:2px solid #ddd;"
     td = "padding:5px 8px;text-align:right;font-size:13px;border-bottom:1px solid #eee;"
     tdl = td.replace("right", "left")
+
+    # ===== REAL MONEY (account ground truth) — the headline now =====
+    cash, posval, rper, rhr = realmoney()
+    acct = (cash + (posval or 0.0)) if cash is not None else None
+    rpnl = (acct - DEPOSIT_START) if acct is not None else None
+    P.append("<h3 style='margin:14px 0 4px;'>Real money - account "
+             "<span style='font-size:11px;color:#999;font-weight:400;'>(ground truth)</span></h3>")
+    P.append("<table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;overflow:hidden;'>")
+    P.append(f"<tr><td style='{tdl}'>account value</td>"
+             f"<td style='{td}'><b style='font-size:15px;'>{'$%.2f' % acct if acct is not None else 'n/a'}</b></td></tr>")
+    if rpnl is not None:
+        P.append(f"<tr><td style='{tdl}'>vs deposit ${DEPOSIT_START:.0f}</td>"
+                 f"<td style='{td}color:{col(rpnl)};'><b>{rpnl:+.2f}</b></td></tr>")
+    P.append(f"<tr><td style='{tdl}'>cash / open positions</td>"
+             f"<td style='{td}'>{'$%.2f' % cash if cash is not None else '?'} / "
+             f"{'$%.2f' % posval if posval is not None else '?'}</td></tr>")
+    P.append(f"<tr><td style='{tdl}'>live fills (last 1h)</td><td style='{td}'>{rhr[0]} (${rhr[1]:.2f})</td></tr>")
+    P.append("</table>")
+
+    P.append("<h3 style='margin:14px 0 4px;'>Real money - per coin "
+             "<span style='font-size:11px;color:#999;font-weight:400;'>(realized via WS-proxy; account above is truth)</span></h3>")
+    P.append("<table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;overflow:hidden;'>")
+    P.append(f"<tr><th style='{th.replace('right','left')}'>coin</th><th style='{th}'>fills</th>"
+             f"<th style='{th}'>win%</th><th style='{th}'>realized $</th></tr>")
+    rtot = [0, 0.0, 0, 0, 0.0]
+    for cn in ("btc", "eth", "sol", "xrp"):
+        a = rper.get(cn, [0, 0.0, 0, 0, 0.0])
+        for i in range(5):
+            rtot[i] += a[i]
+        wrr = f"{round(100*a[3]/a[2])}%" if a[2] else "-"
+        P.append(f"<tr><td style='{tdl}'><b>{cn}</b></td><td style='{td}'>{a[0]}</td>"
+                 f"<td style='{td}'>{wrr}</td><td style='{td}color:{col(a[4])};'><b>{a[4]:+.2f}</b></td></tr>")
+    wrr = f"{round(100*rtot[3]/rtot[2])}%" if rtot[2] else "-"
+    P.append(f"<tr><td style='{tdl}'><b>TOTAL</b></td><td style='{td}'>{rtot[0]}</td>"
+             f"<td style='{td}'>{wrr}</td><td style='{td}color:{col(rtot[4])};'><b>{rtot[4]:+.2f}</b></td></tr>")
+    P.append("</table>")
 
     # COINS - all-time cumulative (reset-independent); the pnl column sums to the Sleeves TOTAL.
     # "now $" is the current-session cash (resets only on a VM reboot now).
