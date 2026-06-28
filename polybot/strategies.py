@@ -91,6 +91,41 @@ class FavHold(FavConvergence):
         super().__init__(name, params)
 
 
+@register("flat_favorite")
+class FlatFavorite(FavConvergence):
+    """FavConvergence, but the entry is decided at the FIRST in-band tick and TAKEN ONLY IF the
+    favorite's price has been FLAT — |mid change| <= flat_tol over `lookback` ticks; otherwise the
+    market is skipped. A settled/stable favorite holds to settlement; a still-moving one (rising OR
+    fading) is more likely to reverse. Validated on ~6300 markets: flat favorites win far above their
+    price (paired-permutation placebo p<0.001, win-edge +8pp at floor 0.55) while rising/fading
+    favorites have ~0 edge. Single entry, hold (set stop_p=0). mid = (bp1+ap1)/2 = the study's signal."""
+    def __init__(self, name, params):
+        super().__init__(name, params)
+        self.lookback = params.get("lookback", 10)
+        self.flat_tol = params.get("flat_tol", 0.01)
+        self._hist = deque(maxlen=self.lookback + 1)
+        self._evaluated = False
+
+    def reset(self):
+        self._hist.clear()
+        self._evaluated = False
+
+    def decide(self, tick: Tick, pos: Position) -> List[Order]:
+        self._hist.append((tick.bp1 + tick.ap1) / 2.0)           # favorite-side mid (side-agnostic move)
+        orders = self._reversal_stop(tick, pos)
+        if not self._evaluated and self._can_enter(tick, pos) and len(self._hist) > self.lookback:
+            in_band = (self.lo <= tick.ap1 <= self.hi) or (self.lo <= tick.no_ask <= self.hi)
+            if in_band:
+                self._evaluated = True                           # decide ONCE, at the first in-band tick
+                if abs(self._hist[-1] - self._hist[0]) <= self.flat_tol:   # FLAT -> take it; else skip market
+                    usd = pos.cash * self.bullet_pct
+                    if self.lo <= tick.ap1 <= self.hi and self._spot_confirms(tick, "YES"):
+                        orders.append(Order("YES", "BUY", usd))
+                    elif self.lo <= tick.no_ask <= self.hi and self._spot_confirms(tick, "NO"):
+                        orders.append(Order("NO", "BUY", usd))
+        return orders
+
+
 @register("momentum_favorite")
 class MomentumFavorite(FavConvergence):
     """FavConvergence, but only enter a favorite that is RISING over a lookback window

@@ -106,7 +106,7 @@ def live_params():
     run_d = dict(capital_per_market=1000.0)
     try:
         cfg = json.load(open(CFG))
-        strat = [(s["id"], s.get("params", {})) for s in cfg["strategies"]]
+        strat = [(s["id"], s.get("name", "?"), s.get("params", {})) for s in cfg["strategies"]]
     except Exception:
         pass
     try:                                  # introspect deployed defaults so the report self-updates
@@ -344,17 +344,18 @@ def main():
     P.append(f"<div style='font-size:12px;color:#555;margin:2px 0 6px;'>mode "
              f"<b style='color:{modecol};'>{html.escape(lp['mode'])}</b> &middot; config <code>{html.escape(lp['cfg'].split('/')[-1])}</code>"
              f" &middot; code <code>{html.escape(lp['commit'])}</code></div>")
-    pk = ["buy_p", "sell_p", "stop_p", "time_cutoff", "max_buy", "bullet_pct"]
+    pk = ["buy_p", "sell_p", "stop_p", "time_cutoff", "max_buy", "bullet_pct", "lookback", "flat_tol"]
     P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
-    hdr = f"<tr><th style='{th.replace('right','left')}'>sleeve</th>"
+    hdr = f"<tr><th style='{th.replace('right','left')}'>sleeve</th><th style='{th.replace('right','left')}'>strategy</th>"
     for k in pk:
         hdr += f"<th style='{th}'>{k}</th>"
     P.append(hdr + "</tr>")
-    for sid, pr in lp["strat"]:
-        row = f"<tr><td style='{tdl}'><b>{html.escape(str(sid))}</b></td>"
+    for sid, nm, pr in lp["strat"]:
+        row = (f"<tr><td style='{tdl}'><b>{html.escape(str(sid))}</b></td>"
+               f"<td style='{tdl}'><code>{html.escape(str(nm))}</code></td>")
         for k in pk:
             v = pr.get(k, "-")
-            hl = "color:#067d06;font-weight:700;" if k == "buy_p" else ""
+            hl = "color:#067d06;font-weight:700;" if k in ("buy_p", "flat_tol") else ""
             row += f"<td style='{td}{hl}'>{v}</td>"
         P.append(row + "</tr>")
     P.append("</table></div>")
