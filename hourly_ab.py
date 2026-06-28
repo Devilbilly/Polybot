@@ -49,7 +49,9 @@ def hourly(buy_p):
     return ph
 
 
-h70, h78 = hourly(0.70), hourly(0.78)
+LIVE = round(float(base["strategies"][0]["params"].get("buy_p", 0.70)), 2)
+FLOORS = sorted(set([0.70, LIVE, 0.78]))
+H = {f: hourly(f) for f in FLOORS}
 
 TH = "padding:6px 8px;text-align:right;font-size:13px;border-bottom:2px solid #ddd;"
 TD = "padding:5px 8px;text-align:right;font-size:13px;border-bottom:1px solid #eee;"
@@ -64,28 +66,41 @@ def wr(b):
     return f"{round(100*b[2]/b[1])}%" if b[1] else "-"
 
 
+def is_live(f):
+    return abs(f - LIVE) < 1e-9
+
+
+def lbl(f):
+    return f"{f:.2f}" + (" (live)" if is_live(f) else "")
+
+
 P = ["<div style='max-width:680px;margin:0 auto;padding:0 12px;"
      "font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#222;'>"]
-P.append("<h3 style='margin:16px 0 4px;'>Hourly A/B - 0.70 (live) vs 0.78 (variant) "
-         "<span style='font-size:11px;color:#999;font-weight:400;'>(both replayed, fixed $1k basis)</span></h3>")
+P.append("<h3 style='margin:16px 0 4px;'>Hourly A/B - buy_p floors "
+         "<span style='font-size:11px;color:#999;font-weight:400;'>(all replayed, fixed $1k basis; live floor marked)</span></h3>")
 P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
-P.append(f"<tr><th style='{TDL.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
-         f"<th style='{TH}'>0.70 $</th><th style='{TH}'>0.70 win%</th>"
-         f"<th style='{TH}'>0.78 $</th><th style='{TH}'>0.78 win%</th></tr>")
-allh = sorted(set(h70) | set(h78))[-HOURS:]
-c70 = c78 = 0.0
+hdr = f"<tr><th style='{TDL.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
+for f in FLOORS:
+    mark = "color:#067d06;" if is_live(f) else ""
+    hdr += f"<th style='{TH}{mark}'>{lbl(f)} $</th><th style='{TH}'>win%</th>"
+P.append(hdr + "</tr>")
+allh = sorted(set().union(*[set(h) for h in H.values()]))[-HOURS:]
+cum = {f: 0.0 for f in FLOORS}
 for hk in allh:
-    a, b = h70.get(hk, [0.0, 0, 0]), h78.get(hk, [0.0, 0, 0])
-    c70 += a[0]; c78 += b[0]
-    P.append(f"<tr><td style='{TDL}'>{hk}</td>"
-             f"<td style='{TD}color:{col(a[0])};'><b>{a[0]:+.1f}</b></td><td style='{TD}'>{wr(a)}</td>"
-             f"<td style='{TD}color:{col(b[0])};'><b>{b[0]:+.1f}</b></td><td style='{TD}'>{wr(b)}</td></tr>")
-P.append(f"<tr><td style='{TDL}'><b>cum (shown)</b></td>"
-         f"<td style='{TD}color:{col(c70)};'><b>{c70:+.1f}</b></td><td style='{TD}'></td>"
-         f"<td style='{TD}color:{col(c78)};'><b>{c78:+.1f}</b></td><td style='{TD}'></td></tr>")
+    row = f"<tr><td style='{TDL}'>{hk}</td>"
+    for f in FLOORS:
+        b = H[f].get(hk, [0.0, 0, 0]); cum[f] += b[0]
+        mark = "font-weight:700;" if is_live(f) else ""
+        row += f"<td style='{TD}color:{col(b[0])};{mark}'><b>{b[0]:+.1f}</b></td><td style='{TD}'>{wr(b)}</td>"
+    P.append(row + "</tr>")
+crow = f"<tr><td style='{TDL}'><b>cum (shown)</b></td>"
+for f in FLOORS:
+    mark = "font-weight:700;" if is_live(f) else ""
+    crow += f"<td style='{TD}color:{col(cum[f])};{mark}'><b>{cum[f]:+.1f}</b></td><td style='{TD}'></td>"
+P.append(crow + "</tr>")
 P.append("</table></div>")
-P.append("<p style='font-size:11px;color:#999;margin-top:6px;'>$ are at a fixed $1k book (no compounding) so "
-         "0.70 vs 0.78 is a clean A/B; magnitudes differ from the live compounding paper grid above. "
-         "Live config UNCHANGED at 0.70.</p>")
+P.append("<p style='font-size:11px;color:#999;margin-top:6px;'>$ at a fixed $1k book (no compounding) so floors are a clean "
+         "A/B; magnitudes differ from the live compounding grid above. Live floor = " + lbl(LIVE) +
+         ". Single-hour A/B is high-variance - read the cum row.</p>")
 P.append("</div>")
 print("\n".join(P))

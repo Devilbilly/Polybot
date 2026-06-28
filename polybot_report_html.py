@@ -94,6 +94,45 @@ def sh(cmd):
         return "?"
 
 
+def live_params():
+    """Everything that defines the live run, so every number in this report is traceable to an exact
+    config: strategy params (from the config the trader actually loads) + execution/sizing constants
+    (introspected from the DEPLOYED code, not assumed) + the run mode (--live/--dryrun) + git commit."""
+    import json
+    import inspect
+    strat = []
+    exec_d = dict(order_type="FAK", min_usd=1.0, max_shares=5.0, min_price=0.5,
+                  desync_tol=0.05, signature_type=3)
+    run_d = dict(capital_per_market=1000.0)
+    try:
+        cfg = json.load(open(CFG))
+        strat = [(s["id"], s.get("params", {})) for s in cfg["strategies"]]
+    except Exception:
+        pass
+    try:                                  # introspect deployed defaults so the report self-updates
+        sys.path.insert(0, "/home/palacedeforsaken/Polybot")
+        from polybot import execution as _ex, live as _lv
+        ep = inspect.signature(_ex.ClobExecutor.__init__).parameters
+        for k in ("min_usd", "max_shares", "min_price", "desync_tol"):
+            if k in ep and ep[k].default is not inspect.Parameter.empty:
+                exec_d[k] = ep[k].default
+        rp = inspect.signature(_lv.run_multi).parameters
+        if rp["capital_per_market"].default is not inspect.Parameter.empty:
+            run_d["capital_per_market"] = rp["capital_per_market"].default
+    except Exception:
+        pass
+    es = sh("systemctl show polybot-trade -p ExecStart --value")
+    mode = "live (real money)" if "--live" in es else ("dry-run" if "--dryrun" in es else "paper")
+    commit = sh("cd /home/palacedeforsaken/Polybot && git rev-parse --short HEAD 2>/dev/null")
+    if not commit or commit == "?":          # box isn't a git checkout -> show when the config last changed
+        try:
+            import os
+            commit = "cfg edited " + time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(os.path.getmtime(CFG)))
+        except Exception:
+            commit = "?"
+    return dict(strat=strat, exec=exec_d, run=run_d, mode=mode, commit=commit, cfg=CFG)
+
+
 def latest_log():
     pat = re.compile(r"TOTAL \$([\d.]+).*?btc=\$([\d.]+).*?eth=\$([\d.]+).*?sol=\$([\d.]+).*?xrp=\$([\d.]+)")
     total, coins = None, None
@@ -296,6 +335,37 @@ def main():
                  f"<b style='color:{col(r)};font-size:15px;'>r = {r:+.2f}</b> over {nn}h - they {interp}. "
                  f"<span style='color:#999;font-size:11px;'>Real mirrors paper entries so they should be positively "
                  f"correlated; gap = stake size / slippage / proxy noise.</span></div>")
+
+    # ===== LIVE PARAMETERS (so every number above is traceable to an exact config) =====
+    lp = live_params()
+    modecol = "#067d06" if "live" in lp["mode"] else "#888"
+    P.append("<h3 style='margin:16px 0 4px;'>Live parameters "
+             "<span style='font-size:11px;color:#999;font-weight:400;'>(what produced the numbers above)</span></h3>")
+    P.append(f"<div style='font-size:12px;color:#555;margin:2px 0 6px;'>mode "
+             f"<b style='color:{modecol};'>{html.escape(lp['mode'])}</b> &middot; config <code>{html.escape(lp['cfg'].split('/')[-1])}</code>"
+             f" &middot; code <code>{html.escape(lp['commit'])}</code></div>")
+    pk = ["buy_p", "sell_p", "stop_p", "time_cutoff", "max_buy", "bullet_pct"]
+    P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
+    hdr = f"<tr><th style='{th.replace('right','left')}'>sleeve</th>"
+    for k in pk:
+        hdr += f"<th style='{th}'>{k}</th>"
+    P.append(hdr + "</tr>")
+    for sid, pr in lp["strat"]:
+        row = f"<tr><td style='{tdl}'><b>{html.escape(str(sid))}</b></td>"
+        for k in pk:
+            v = pr.get(k, "-")
+            hl = "color:#067d06;font-weight:700;" if k == "buy_p" else ""
+            row += f"<td style='{td}{hl}'>{v}</td>"
+        P.append(row + "</tr>")
+    P.append("</table></div>")
+    e = lp["exec"]; rn = lp["run"]
+    P.append(f"<div style='font-size:12px;color:#555;margin:6px 0;'>"
+             f"<b>execution</b>: order <code>{e['order_type']}</code> (fill-and-kill) &middot; "
+             f"sizing integer shares min <code>${e['min_usd']:.0f}</code> / max <code>{e['max_shares']:.0f} sh</code> &middot; "
+             f"min price <code>{e['min_price']}</code> &middot; stale-book gate <code>{e['desync_tol']}</code> &middot; "
+             f"signature_type <code>{e['signature_type']}</code> &middot; BUY-only<br>"
+             f"<b>run</b>: capital <code>${rn['capital_per_market']:.0f}</code>/market &middot; "
+             f"assets <code>btc, eth, sol, xrp</code> &middot; real stake ~$1/trade (1-share probe)</div>")
 
     P.append("<p style='font-size:11px;color:#999;margin-top:14px;'>cum = running realized P&amp;L from the very start (reset-independent). "
              "The per-session $4000 total resets every 6h. Coins are current-session only.</p>")

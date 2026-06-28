@@ -1,8 +1,8 @@
 {
-    "_comment": "SINGLE-EDGE config (2026-06-26). Only fav_hold = behavioural favorite-longshot edge (buy 0.70-0.93, hold to settle, NO stop; live-confirmed +EV, +$700+ over 400+ trades, ~84% win). The spot/btc_spot_divergence sleeve was REJECTED live (19 trades, 15% win, -$74): offline assumed the Polymarket book LAGS the spot model, but LIVE the market is FASTER than the simple lognormal model, so trading the divergence loses. Two-edge backup kept on the box as portfolio.json history; favonly == this file. CLUE worth an offline check: 15% ~= inverse of an 85% favorite -> spot may be systematically wrong-sided, so FADING the model (flip the signal) might be +EV.",
+    "_comment": "SINGLE-EDGE config. Only fav_hold = behavioural favorite-longshot edge (buy favorite in [buy_p, sell_p], hold to settle, NO stop; live-confirmed +EV, ~84% win). buy_p RAISED 0.70->0.76 on 2026-06-28 (REAL MONEY): per-coin OOS floor sweep (train older 472 / test newer 315 mkts) showed 0.76 is the only floor where all four coins are positive on the unseen test set, ~halves max-DD vs 0.70 (combined test DD 22->18, win 80%->85%), and doesn't starve btc/sol like 0.80. Per-COIN floors were REJECTED as overfit (train-best floor flips on test for every coin; per-coin n~30 too thin). Improvement is risk-adjusted (Sharpe/DD), not big EV. The spot/btc_spot_divergence sleeve was REJECTED live (19 trades, 15% win, -$74). CLUE: 15% ~= inverse of an 85% favorite -> spot may be systematically wrong-sided, so FADING the model might be +EV.",
     "strategies": [
         {"id": "fav_hold", "name": "fav_convergence", "weight": 1.0,
-         "params": {"buy_p": 0.70, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.0, "max_buy": 1, "bullet_pct": 0.025}}
+         "params": {"buy_p": 0.76, "sell_p": 0.93, "time_cutoff": 0.50, "stop_p": 0.0, "max_buy": 1, "bullet_pct": 0.025}}
     ],
     "engine": {"fee": 0.001, "slippage": 0.002, "cap_fills": true},
     "risk": {"kill_switch_dd": 0.25, "soft_dd": 0.15, "round_loss_limit": 0.08, "min_capital": 50.0}
