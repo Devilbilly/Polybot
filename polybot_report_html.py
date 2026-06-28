@@ -49,6 +49,7 @@ def realmoney():
     except Exception:
         pass
     per = defaultdict(lambda: [0, 0.0, 0, 0, 0.0])   # coin -> fills,spent,settled,wins,realized
+    phour = defaultdict(lambda: [0, 0, 0, 0.0])       # CST hour -> fills,settled,wins,realized(proxy)
     hr = [0, 0.0]
     try:
         lc = sqlite3.connect("file:%s?mode=ro" % LED, uri=True)
@@ -60,15 +61,18 @@ def realmoney():
             coin = coin if coin in ("btc", "eth", "sol", "xrp") else "?"
             fp = float(fp or 0); shv = float(shv or 0); cost = fp * shv
             a = per[coin]; a[0] += 1; a[1] += cost
+            hk = time.strftime("%m-%d %H", time.gmtime(int(ts) + 8 * 3600)) if ts else "?"
+            ph = phour[hk]; ph[0] += 1
             if ts and ts >= mx - 3600:
                 hr[0] += 1; hr[1] += cost
             if win:
                 pay = shv if side == win else 0.0
                 a[2] += 1; a[3] += 1 if side == win else 0; a[4] += pay - cost
+                ph[1] += 1; ph[2] += 1 if side == win else 0; ph[3] += pay - cost
         lc.close()
     except Exception:
         pass
-    return cash, posval, per, hr
+    return cash, posval, per, hr, phour
 
 
 def _sleeves():
@@ -173,7 +177,7 @@ def main():
     tdl = td.replace("right", "left")
 
     # ===== REAL MONEY (account ground truth) — the headline now =====
-    cash, posval, rper, rhr = realmoney()
+    cash, posval, rper, rhr, rphour = realmoney()
     acct = (cash + (posval or 0.0)) if cash is not None else None
     rpnl = (acct - DEPOSIT_START) if acct is not None else None
     P.append("<h3 style='margin:14px 0 4px;'>Real money - account "
@@ -259,25 +263,39 @@ def main():
             P.append(line)
         P.append("</table></div>")
 
-    # HOURLY grid (rows=hour, cols=sleeve pnl + TOTAL + cum)
-    P.append(f"<h3 style='margin:14px 0 4px;'>Hourly P&amp;L (last {len(show)}h, CST)</h3>")
+    # ===== Hourly - PAPER vs REAL side by side (so the correlation is visible) =====
+    paper_h = {hh: (sum(hourly[hh][k][0] for k, _ in SLEEVES),
+                    sum(hourly[hh][k][1] for k, _ in SLEEVES),
+                    sum(hourly[hh][k][2] for k, _ in SLEEVES)) for hh in hourly}
+    allhh = sorted(set(paper_h) | set(rphour))
+    showh = allhh[-HOURS:]
+    P.append(f"<h3 style='margin:14px 0 4px;'>Hourly - Paper vs Real (last {len(showh)}h, CST)</h3>")
     P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
-    hdr = f"<tr><th style='{th.replace('right','left')}'>hour</th>"
-    for _, short in SLEEVES:
-        hdr += f"<th style='{th}'>{short}</th>"
-    hdr += f"<th style='{th}'>TOT</th><th style='{th}'>cum</th></tr>"
-    P.append(hdr)
-    for hr in show:
-        line = f"<tr><td style='{tdl}'>{hr}</td>"
-        tot = 0.0
-        for k, _ in SLEEVES:
-            p, f, w = hourly[hr][k]; tot += p
-            inner = (f"<b>{money(p)}</b><br><span style='font-size:10px;color:#999;'>{wr(f,w)}-{f}</span>") if f else "<span style='color:#bbb'>-</span>"
-            line += f"<td style='{td}color:{col(p)};'>{inner}</td>"
-        ctot = sum(cum_at[hr][k][0] for k, _ in SLEEVES)
-        line += f"<td style='{td}color:{col(tot)};'><b>{money(tot)}</b></td><td style='{td}color:{col(ctot)};'>{money(ctot)}</td></tr>"
-        P.append(line)
+    P.append(f"<tr><th style='{th.replace('right','left')}'>hour</th><th style='{th}'>paper $</th>"
+             f"<th style='{th}'>paper win%</th><th style='{th}'>real $</th><th style='{th}'>real win%</th>"
+             f"<th style='{th}'>real n</th></tr>")
+    for hh in showh:
+        pp = paper_h.get(hh, (0.0, 0, 0))
+        rr = rphour.get(hh, [0, 0, 0, 0.0])
+        P.append(f"<tr><td style='{tdl}'>{hh}</td>"
+                 f"<td style='{td}color:{col(pp[0])};'><b>{money(pp[0])}</b></td><td style='{td}'>{wr(pp[1], pp[2])}</td>"
+                 f"<td style='{td}color:{col(rr[3])};'><b>{rr[3]:+.2f}</b></td><td style='{td}'>{wr(rr[1], rr[2])}</td>"
+                 f"<td style='{td}'>{rr[0]}</td></tr>")
     P.append("</table></div>")
+    common = [h for h in allhh if paper_h.get(h, (0, 0, 0))[1] > 0 and rphour.get(h, [0, 0, 0, 0])[1] > 0]
+    if len(common) >= 3:
+        xs = [paper_h[h][0] for h in common]
+        ys = [rphour[h][3] for h in common]
+        nn = len(xs); mx = sum(xs) / nn; my = sum(ys) / nn
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        dx = sum((x - mx) ** 2 for x in xs) ** 0.5
+        dy = sum((y - my) ** 2 for y in ys) ** 0.5
+        r = num / (dx * dy) if dx > 0 and dy > 0 else 0.0
+        interp = "tightly track" if r > 0.6 else ("loosely track" if r > 0.2 else ("diverge" if r < -0.1 else "weak"))
+        P.append(f"<div style='font-size:13px;color:#555;margin:6px 0;'>Paper &harr; Real hourly correlation "
+                 f"<b style='color:{col(r)};font-size:15px;'>r = {r:+.2f}</b> over {nn}h - they {interp}. "
+                 f"<span style='color:#999;font-size:11px;'>Real mirrors paper entries so they should be positively "
+                 f"correlated; gap = stake size / slippage / proxy noise.</span></div>")
 
     P.append("<p style='font-size:11px;color:#999;margin-top:14px;'>cum = running realized P&amp;L from the very start (reset-independent). "
              "The per-session $4000 total resets every 6h. Coins are current-session only.</p>")
