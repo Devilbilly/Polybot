@@ -49,15 +49,25 @@ def realmoney():
     except Exception:
         pass
     per = defaultdict(lambda: [0, 0.0, 0, 0, 0.0])   # coin -> fills,spent,settled,wins,realized
-    phour = defaultdict(lambda: [0, 0, 0, 0.0])       # CST hour -> fills,settled,wins,realized(proxy)
+    phour = defaultdict(lambda: [0, 0, 0, 0.0])       # CST hour -> fills,settled,wins,realized
+    cphour = defaultdict(lambda: defaultdict(lambda: [0, 0, 0.0]))  # CST hour -> coin -> [n,wins,realized]
     hr = [0, 0.0]
     try:
+        # The ledger logs NO LIVE settle/pnl rows, so get each market's actual winner by market_id
+        # from the paper sessions, and reconstruct realized = shares*(1-px) if our side won else -cost.
+        winners = {}
+        try:
+            pc = sqlite3.connect("file:%s?mode=ro" % DB, uri=True, timeout=20)
+            winners = {mid: w for mid, w in pc.execute(
+                "SELECT market_id,winner FROM sessions WHERE winner IN ('YES','NO')")}
+            pc.close()
+        except Exception:
+            pass
         lc = sqlite3.connect("file:%s?mode=ro" % LED, uri=True)
         mx = lc.execute("SELECT MAX(ts) FROM ledger").fetchone()[0] or 0
-        for coin, side, fp, shv, ts, win in lc.execute(
-                "SELECT f.coin,f.side,f.fill_price,f.fill_shares,f.ts,s.winner FROM ledger f "
-                "LEFT JOIN ledger s ON s.trade_id=f.trade_id AND s.event='SETTLE' "
-                "WHERE f.event='FILL' AND f.mode='LIVE' AND f.fill_price>0"):
+        for coin, mid, side, fp, shv, ts in lc.execute(
+                "SELECT coin,market_id,side,fill_price,fill_shares,ts FROM ledger "
+                "WHERE event='FILL' AND mode='LIVE' AND fill_shares>0"):
             coin = coin if coin in ("btc", "eth", "sol", "xrp") else "?"
             fp = float(fp or 0); shv = float(shv or 0); cost = fp * shv
             a = per[coin]; a[0] += 1; a[1] += cost
@@ -65,14 +75,17 @@ def realmoney():
             ph = phour[hk]; ph[0] += 1
             if ts and ts >= mx - 3600:
                 hr[0] += 1; hr[1] += cost
+            win = winners.get(mid)
             if win:
-                pay = shv if side == win else 0.0
-                a[2] += 1; a[3] += 1 if side == win else 0; a[4] += pay - cost
-                ph[1] += 1; ph[2] += 1 if side == win else 0; ph[3] += pay - cost
+                pnl = (shv if side == win else 0.0) - cost     # shares*(1-px) if win else -cost
+                won = 1 if side == win else 0
+                a[2] += 1; a[3] += won; a[4] += pnl
+                ph[1] += 1; ph[2] += won; ph[3] += pnl
+                cb = cphour[hk][coin]; cb[0] += 1; cb[1] += won; cb[2] += pnl
         lc.close()
     except Exception:
         pass
-    return cash, posval, per, hr, phour
+    return cash, posval, per, hr, phour, cphour
 
 
 def _sleeves():
@@ -219,7 +232,7 @@ def main():
     tdl = td.replace("right", "left")
 
     # ===== REAL MONEY (account ground truth) — the headline now =====
-    cash, posval, rper, rhr, rphour = realmoney()
+    cash, posval, rper, rhr, rphour, rcphour = realmoney()
     acct = (cash + (posval or 0.0)) if cash is not None else None
     rpnl = (acct - DEPOSIT_START) if acct is not None else None
     P.append("<h3 style='margin:14px 0 4px;'>Real money - account "
@@ -385,6 +398,48 @@ def main():
             line += f"<td style='{td}color:{col(cv)};'><b>{money(cv)}</b></td>"
             P.append(line + "</tr>")
         P.append("</table></div>")
+
+    # ===== Per-coin x hour — REAL money (LIVE fills x market winner; ledger has no LIVE pnl) =====
+    rht = {hh: sum(rcphour[hh][cn][2] for cn in COIN_NAMES if cn in rcphour[hh]) for hh in rcphour}
+    rcum = 0.0
+    rcum_at = {}
+    for hh in sorted(rcphour):
+        rcum += rht[hh]
+        rcum_at[hh] = rcum
+    rshow = sorted(rcphour)[-HOURS:]
+    if rshow:
+        netreal = sum(rper.get(cn, [0, 0.0, 0, 0, 0.0])[4] for cn in COIN_NAMES)
+        P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour &mdash; <span style='color:#067d06;'>REAL money</span> "
+                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(realized $ / win% &middot; n &middot; "
+                 f"&Sigma;cum; last {len(rshow)}h, CST)</span></h3>")
+        P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
+        hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
+        for cn in COIN_NAMES:
+            hdr += f"<th style='{th}'>{cn}</th>"
+        hdr += f"<th style='{th}'>&Sigma;cum</th>"
+        P.append(hdr + "</tr>")
+        for hh in rshow:
+            line = f"<tr><td style='{tdl}'>{hh}</td>"
+            for cn in COIN_NAMES:
+                n, wins, pnl = rcphour[hh].get(cn, [0, 0, 0.0])
+                if n:
+                    inner = (f"<b>{pnl:+.2f}</b><br><span style='font-size:10px;color:#999;'>"
+                             f"{wr(n, wins)} &middot; {n}</span>")
+                    line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
+                else:
+                    line += f"<td style='{td}color:#bbb;'>-</td>"
+            cv = rcum_at[hh]
+            line += f"<td style='{td}color:{col(cv)};'><b>{cv:+.2f}</b></td>"
+            P.append(line + "</tr>")
+        P.append("</table></div>")
+        resid = (rpnl - netreal) if rpnl is not None else None
+        acct_txt = f"${rpnl:+.2f}" if rpnl is not None else "n/a"
+        resid_txt = f"${resid:+.2f}" if resid is not None else "n/a"
+        P.append(f"<div style='font-size:11px;color:#999;margin:4px 0;'>Reconstructed from LIVE fills &times; the "
+                 f"market's actual winner (the ledger logs no LIVE settle). <b>Net trade pnl ${netreal:+.2f}</b> "
+                 f"(this is the strategy's real trading result) vs account move <b>{acct_txt}</b> &mdash; the "
+                 f"<b>{resid_txt}</b> residual is NOT trades (fees=$0): a deposit-baseline / open-positions "
+                 f"valuation gap, under investigation.</div>")
 
     # ===== LIVE PARAMETERS (so every number above is traceable to an exact config) =====
     lp = live_params()
