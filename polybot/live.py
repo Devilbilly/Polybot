@@ -661,6 +661,9 @@ if __name__ == "__main__":  # pragma: no cover
         # real-vs-paper, ZERO real money) | live (real CLOB probes — needs creds, not yet built)
         mode = ("shadow" if "--shadow" in sys.argv else "dryrun" if "--dryrun" in sys.argv
                 else "live" if "--live" in sys.argv else "paper")
-        asyncio.run(run_multi(real_mode=mode))   # PLAYER: trade many markets in parallel (favorites-only)
+        kw = {}
+        if "--assets" in sys.argv:               # TRADE a subset only (recorder still records all 4)
+            kw["assets"] = tuple(a for a in sys.argv[sys.argv.index("--assets") + 1].split(",") if a)
+        asyncio.run(run_multi(real_mode=mode, **kw))   # PLAYER: trade many markets in parallel (favorites-only)
     else:
         asyncio.run(run())                # single BTC market, favorites-only (default, proven)
