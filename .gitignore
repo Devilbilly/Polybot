@@ -30,3 +30,4 @@ htmlcov/
 .remember/
 *.cred
 *.key
+boxdata/
