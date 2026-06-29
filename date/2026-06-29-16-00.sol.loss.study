@@ -1,0 +1,83 @@
+# 2026-06-29-16-00 CST -- SOL -- LOSS -$59  (win 60%, n=10, fire 83%)
+
+CST hour 2026-06-29-16-00 == UTC 08:00-08:59 on 2026-06-29. PAPER signal pnl @ ~$25/trade notional.
+
+## What happened
+
+12 SOL rounds, 10 traded (2 no-trade: 08:10, 08:30), 6 wins / 4 losses = **60% win**.
+PAPER signal pnl = **-$59.06** (sum of session_strategy.pnl, all `fav_hold`).
+
+The loss is **broad, not concentrated** -- four near-identical full-notional losses, no single blow-up:
+
+| UTC   | side bought | fill | winner | strat pnl |
+|-------|-------------|------|--------|-----------|
+| 08:00 | NO          | --   | NO     | +7.54     |
+| 08:05 | YES         | 0.78 | YES    | +6.02     |
+| 08:15 | NO          | 0.85 | YES    | **-25.54** |
+| 08:20 | YES         | 0.76 | NO     | **-24.91** |
+| 08:25 | NO          | 0.76 | NO     | +7.55     |
+| 08:35 | NO          | 0.78 | YES    | **-24.47** |
+| 08:40 | YES         | 0.85 | YES    | +4.12     |
+| 08:45 | YES         | 0.75 | YES    | +7.45     |
+| 08:50 | YES         | 0.78 | YES    | +7.51     |
+| 08:55 | YES         | 0.81 | NO     | **-24.34** |
+
+Wins pay small (+$4 to +$7.5, avg ~+$6.4); losses pay near-full notional (~-$24 to -$25). This is the
+built-in payoff asymmetry of fav-hold: 6 small wins (+$40.2) cannot cover 4 full losses (-$99.3) -> -$59.
+Mechanically you need ~80%+ just to break even, so a 60% hour is automatically a big red number.
+
+## Entry prices
+
+Bought favorites in-band [0.76, 0.85] as designed; fill range [0.75, 0.85], mean 0.794. Execution was
+clean -- **no adverse slippage**. LIVE fills came in at or BETTER than the paper reference in every case
+(e.g. 08:05 fill 0.78 vs paper 0.808; 08:20 fill 0.76 vs paper 0.783; 08:35 fill 0.78 vs paper 0.783).
+The fav_hold pnl is PAPER and uses the same entries, so execution did not cause the loss.
+
+Were the losers bought too high (thin margin near 0.85)? Mixed, so NOT a high-entry story:
+- 08:15 lost @ **0.85** (top of band, thin) and 08:55 lost @ 0.81 -- consistent with thin-margin risk.
+- BUT 08:20 lost @ **0.76** and 08:35 @ 0.78 -- cheap entries that still flipped.
+- And the two *highest* entries that were NOT losers: 08:40 @ 0.85 WON. High entry was neither necessary
+  nor sufficient. Entries were normal.
+
+## Spot context
+
+Binance SOLUSDT 1m, UTC 08:00-08:59:
+- open 72.720 -> close 72.730, **net +0.014%** (essentially zero).
+- hour high 73.020 / low 72.390, **range 0.866%** -- tight.
+- 28 up minutes / 30 down / 2 flat -- balanced.
+
+**Flat chop, no directional event.** There was no sharp reversal or trend that systematically upset
+favorites. Per-round 5-min net moves were tiny: the four losing rounds settled on moves of roughly
+-0.02 (08:15), -0.04 (08:20), +0.11 (08:35, we held the NO side), -0.10 (08:55) -- i.e. **2-to-14-cent
+wiggles on a $72.7 coin**. When the true move is noise-sized, a "76-85% favorite" is really closer to a
+coin flip at settlement, and four of them landed wrong by chance. This is the canonical variance setup,
+the opposite of a regime blip.
+
+## vs normal
+
+- SOL all-time traded: n=391, 327 wins / 64 losses = **83.6% win, cum +$322.39**. Strongest, most
+  reliable coin. ~85% baseline confirmed.
+- This hour: 60% (6/10). Binomial at p=0.85, n=10: P(exactly 6 wins)=4.0%, **P(<=6 wins)=5.0%**,
+  P(>=4 losses)=5.0%. Expected wins = 8.5.
+- So ~1-in-20 (one-sided, ~2-sigma). Unusual but well within normal tail noise -- and over hundreds of
+  hours across 4 coins you EXPECT a handful of 2-sigma hours. Nothing anomalous about one showing up.
+
+## Verdict: VARIANCE
+
+Clear variance. Evidence:
+1. Spot was dead flat (+0.014% net, 0.87% range, 28/30 up/down) -- no directional event upsetting favorites.
+2. Losing rounds turned on 2-14 cent micro-wiggles, exactly where a strong favorite degrades to a coin flip.
+3. Execution was clean (fills at/better than paper) -- not an adverse-fill problem.
+4. Entries were in-band and mixed (losers at both 0.76 and 0.85); no systematic high-entry skew.
+5. 6/10 on SOL's true ~85% edge is a ~5% one-sided event -- a normal 2-sigma tail, and SOL remains the
+   best coin all-time (+$322).
+The -$59 is the payoff-asymmetry amplifier (small wins, full losses) applied to an unlucky 4-loss hour,
+not a signal failure.
+
+## Action
+
+**None.** Do not touch SOL, the [0.76, 0.85] band, or sizing on the basis of this hour. It is non-actionable
+noise on the strongest coin. Standing structural note (not specific to this hour): fav_hold's win-small /
+lose-full asymmetry means any sub-~80% hour prints a large negative -- if a systemic fix is ever wanted it
+is the payoff structure (e.g. take-profit / cap downside), not coin/band/entry changes. Keep monitoring;
+flag only if SOL strings together multiple sub-70% hours *with* a corroborating directional spot tape.
