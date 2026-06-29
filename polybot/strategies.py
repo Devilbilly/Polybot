@@ -51,6 +51,20 @@ class FavConvergence(Strategy):
         self.confirm = params.get("confirm", 0.0)
         self.vol = params.get("vol", 0.0006)
         self.window = params.get("window", 300)
+        # Chop gate (Phase-2 validated): require the underlying to have moved with CONVICTION
+        # from round-open to now before buying a favorite. chop_min=0 -> off (no-op).
+        self.chop_min = params.get("chop_min", 0.0)
+
+    def _not_chop(self, tick: Tick) -> bool:
+        """Decision-honest chop gate. preabsmove = |spot - strike| / strike = the underlying's
+        net move from round-open (strike = window-open spot) to now (spot), per-coin. Skip flat
+        rounds with no directional conviction (return False). NO-OP when spot/strike unavailable
+        (return True) -- matches the backtest's 'no data -> keep'. Validated: skip preabsmove <
+        ~0.00056 (placebo p=0.005, OOS +0.10 pnl/trade, win 88-90%); honours the look-ahead control
+        (uses only round-open vs current, never post-entry)."""
+        if self.chop_min <= 0.0 or tick.spot <= 0.0 or tick.strike <= 0.0:
+            return True
+        return abs(tick.spot - tick.strike) / tick.strike >= self.chop_min
 
     def _spot_confirms(self, tick: Tick, side: str) -> bool:
         if self.confirm <= 0.0 or tick.spot <= 0.0 or tick.strike <= 0.0:
@@ -74,7 +88,7 @@ class FavConvergence(Strategy):
 
     def decide(self, tick: Tick, pos: Position) -> List[Order]:
         orders = self._reversal_stop(tick, pos)
-        if self._can_enter(tick, pos):
+        if self._can_enter(tick, pos) and self._not_chop(tick):
             usd = pos.cash * self.bullet_pct
             if self.lo <= tick.ap1 <= self.hi and self._spot_confirms(tick, "YES"):
                 orders.append(Order("YES", "BUY", usd))

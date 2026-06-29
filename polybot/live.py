@@ -374,6 +374,8 @@ async def run(config_path: str = "polybot/portfolio.json",
 # The favorite-longshot edge isn't BTC-specific — it should appear in every crypto up/down market.
 # Trading several in parallel deploys idle capital, multiplies opportunities, and diversifies.
 ASSET_SLUGS = ("btc", "eth", "sol", "xrp")          # guessed 5-min slug prefixes
+_BINANCE_SYMBOL = {"btc": "BTCUSDT", "bitcoin": "BTCUSDT", "eth": "ETHUSDT",
+                   "sol": "SOLUSDT", "xrp": "XRPUSDT"}   # per-coin spot for the chop gate
 _UPDOWN_ASSETS = ("btc", "bitcoin", "eth", "ethereum", "sol", "solana", "xrp", "ripple",
                   "doge", "dogecoin", "ltc", "litecoin", "bnb", "ada", "cardano")
 
@@ -500,9 +502,10 @@ async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = 
                 if pf is None:                                      # persistent per-asset Portfolio
                     pf = build_portfolio(cfg, capital_per_market); portfolios[asset] = pf
                 pf.new_market()                                     # COMPOUNDS across this asset's windows
-                is_btc = asset in ("btc", "bitcoin")
-                strike = window_open_strike(end_ts, fetch_klines) if (is_btc and fetch_klines) else 0.0
-                spot_fn = fetch_spot if is_btc else None            # spot model only valid for BTC
+                sym = _BINANCE_SYMBOL.get(asset)                    # per-coin spot (chop gate needs the coin's OWN move)
+                strike = (window_open_strike(end_ts, lambda s=sym, **kw: fetch_klines(symbol=s, **kw))
+                          if (sym and fetch_klines) else 0.0)
+                spot_fn = (lambda s=sym: fetch_spot(s)) if (sym and fetch_spot) else None
                 log.info("[%-4s] >>> %s  %4.0fs left  strike=%.2f  cash=$%.2f",
                          asset, label, end_ts - time.time(), strike, pf.total_cash())
                 tasks[asset] = asyncio.create_task(
