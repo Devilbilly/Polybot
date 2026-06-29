@@ -210,8 +210,9 @@ def main():
         f"background:{'#e6f5e6' if v=='active' else '#fdecea'};color:{'#067d06' if v=='active' else '#c0392b'};'>"
         f"{html.escape(s.replace('polybot-',''))}: {html.escape(v)}</span>" for s, v in svc.items())
     P.append(f"<div style='margin:4px 0;'>{badges}</div>")
-    P.append(f"<div style='font-size:13px;color:#555;'>realized P&amp;L (all-time, reset-independent) "
-             f"<b style='color:{col(grand)};font-size:15px;'>${grand:+.0f}</b> - disk {html.escape(disk)}</div>")
+    P.append(f"<div style='font-size:13px;color:#555;'>"
+             f"<b style='color:#c0392b;'>PAPER signal</b> P&amp;L (all-time, ~$25/trade notional &mdash; <b>NOT real money</b>) "
+             f"<b style='color:{col(grand)};font-size:15px;'>${grand:+.0f}</b> &middot; real account below &middot; disk {html.escape(disk)}</div>")
 
     th = "padding:6px 8px;text-align:right;font-size:13px;border-bottom:2px solid #ddd;"
     td = "padding:5px 8px;text-align:right;font-size:13px;border-bottom:1px solid #eee;"
@@ -362,8 +363,8 @@ def main():
     showc = sorted(chx)[-HOURS:]
     if showc:
         P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour "
-                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(last {len(showc)}h, CST &middot; "
-                 f"pnl / win% &middot; n &middot; fire%)</span></h3>")
+                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(<b>paper signal</b>, last {len(showc)}h, CST &middot; "
+                 f"pnl / win% &middot; n &middot; fire% &middot; &Sigma;cum = paper running total, <b>not real money</b>)</span></h3>")
         P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
         hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
         for cn in COIN_NAMES:
