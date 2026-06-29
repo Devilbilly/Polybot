@@ -223,9 +223,7 @@ def main():
         f"background:{'#e6f5e6' if v=='active' else '#fdecea'};color:{'#067d06' if v=='active' else '#c0392b'};'>"
         f"{html.escape(s.replace('polybot-',''))}: {html.escape(v)}</span>" for s, v in svc.items())
     P.append(f"<div style='margin:4px 0;'>{badges}</div>")
-    P.append(f"<div style='font-size:13px;color:#555;'>"
-             f"<b style='color:#c0392b;'>PAPER signal</b> P&amp;L (all-time, ~$25/trade notional &mdash; <b>NOT real money</b>) "
-             f"<b style='color:{col(grand)};font-size:15px;'>${grand:+.0f}</b> &middot; real account below &middot; disk {html.escape(disk)}</div>")
+    P.append(f"<div style='font-size:12px;color:#888;'>services above &middot; disk {html.escape(disk)}</div>")
 
     th = "padding:6px 8px;text-align:right;font-size:13px;border-bottom:2px solid #ddd;"
     td = "padding:5px 8px;text-align:right;font-size:13px;border-bottom:1px solid #eee;"
@@ -235,6 +233,8 @@ def main():
     cash, posval, rper, rhr, rphour, rcphour = realmoney()
     acct = (cash + (posval or 0.0)) if cash is not None else None
     rpnl = (acct - DEPOSIT_START) if acct is not None else None
+    P.append("<div style='margin:18px 0 6px;padding:9px 12px;background:#0a7d2c;color:#fff;border-radius:6px;"
+             "font-weight:700;font-size:15px;'>&#128181; REAL MONEY &mdash; your actual account</div>")
     P.append("<h3 style='margin:14px 0 4px;'>Real money - account "
              "<span style='font-size:11px;color:#999;font-weight:400;'>(ground truth)</span></h3>")
     P.append("<table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;overflow:hidden;'>")
@@ -266,6 +266,55 @@ def main():
     P.append(f"<tr><td style='{tdl}'><b>TOTAL</b></td><td style='{td}'>{rtot[0]}</td>"
              f"<td style='{td}'>{wrr}</td><td style='{td}color:{col(rtot[4])};'><b>{rtot[4]:+.2f}</b></td></tr>")
     P.append("</table>")
+
+    # ----- REAL per-coin x hour (LIVE fills x market winner; ledger logs no LIVE pnl) -----
+    rht = {hh: sum(rcphour[hh][cn][2] for cn in COIN_NAMES if cn in rcphour[hh]) for hh in rcphour}
+    rcum = 0.0
+    rcum_at = {}
+    for hh in sorted(rcphour):
+        rcum += rht[hh]
+        rcum_at[hh] = rcum
+    rshow = sorted(rcphour)[-HOURS:]
+    if rshow:
+        netreal = sum(rper.get(cn, [0, 0.0, 0, 0, 0.0])[4] for cn in COIN_NAMES)
+        P.append(f"<h3 style='margin:14px 0 4px;'>Real money - per coin x hour "
+                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(realized $ / win% &middot; n &middot; "
+                 f"&Sigma;hr=this hour &middot; &Sigma;cum=running; last {len(rshow)}h, CST)</span></h3>")
+        P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
+        hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
+        for cn in COIN_NAMES:
+            hdr += f"<th style='{th}'>{cn}</th>"
+        hdr += f"<th style='{th}'>&Sigma;hr</th><th style='{th}'>&Sigma;cum</th>"
+        P.append(hdr + "</tr>")
+        for hh in rshow:
+            line = f"<tr><td style='{tdl}'>{hh}</td>"
+            for cn in COIN_NAMES:
+                n, wins, pnl = rcphour[hh].get(cn, [0, 0, 0.0])
+                if n:
+                    inner = (f"<b>{pnl:+.2f}</b><br><span style='font-size:10px;color:#999;'>"
+                             f"{wr(n, wins)} &middot; {n}</span>")
+                    line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
+                else:
+                    line += f"<td style='{td}color:#bbb;'>-</td>"
+            ht = rht[hh]
+            line += f"<td style='{td}color:{col(ht)};'>{ht:+.2f}</td>"
+            cv = rcum_at[hh]
+            line += f"<td style='{td}color:{col(cv)};'><b>{cv:+.2f}</b></td>"
+            P.append(line + "</tr>")
+        P.append("</table></div>")
+        resid = (rpnl - netreal) if rpnl is not None else None
+        acct_txt = f"${rpnl:+.2f}" if rpnl is not None else "n/a"
+        resid_txt = f"${resid:+.2f}" if resid is not None else "n/a"
+        P.append(f"<div style='font-size:11px;color:#999;margin:4px 0;'>Reconstructed from LIVE fills &times; the "
+                 f"market's actual winner (the ledger logs no LIVE settle). <b>Net trade pnl ${netreal:+.2f}</b> "
+                 f"(the strategy's real trading result) vs account move <b>{acct_txt}</b> &mdash; the "
+                 f"<b>{resid_txt}</b> residual is NOT trades (fees=$0): a deposit-baseline / open-positions "
+                 f"valuation gap, under investigation.</div>")
+
+    # ===== PAPER SIGNAL section (strategy quality at ~$25/trade notional — NOT real money) =====
+    P.append("<div style='margin:20px 0 6px;padding:9px 12px;background:#8a6d00;color:#fff;border-radius:6px;"
+             f"font-weight:700;font-size:15px;'>&#128221; PAPER SIGNAL &mdash; strategy quality, NOT real money "
+             f"<span style='font-weight:400;font-size:12px;'>(all-time ${grand:+.0f} at ~$25/trade notional)</span></div>")
 
     # COINS - all-time cumulative (reset-independent); the pnl column sums to the Sleeves TOTAL.
     # "now $" is the current-session cash (resets only on a VM reboot now).
@@ -375,14 +424,14 @@ def main():
         cum_at[hh] = cumrun
     showc = sorted(chx)[-HOURS:]
     if showc:
-        P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour "
-                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(<b>paper signal</b>, last {len(showc)}h, CST &middot; "
-                 f"pnl / win% &middot; n &middot; fire% &middot; &Sigma;cum = paper running total, <b>not real money</b>)</span></h3>")
+        P.append(f"<h3 style='margin:14px 0 4px;'>Paper - per coin x hour "
+                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(pnl / win% &middot; n &middot; fire% &middot; "
+                 f"&Sigma;hr=this hour &middot; &Sigma;cum=running; last {len(showc)}h, CST)</span></h3>")
         P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
         hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
         for cn in COIN_NAMES:
             hdr += f"<th style='{th}'>{cn}</th>"
-        hdr += f"<th style='{th}'>&Sigma;cum</th>"
+        hdr += f"<th style='{th}'>&Sigma;hr</th><th style='{th}'>&Sigma;cum</th>"
         P.append(hdr + "</tr>")
         for hh in showc:
             line = f"<tr><td style='{tdl}'>{hh}</td>"
@@ -394,52 +443,12 @@ def main():
                     line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
                 else:
                     line += f"<td style='{td}color:#bbb;'>-</td>"
+            ht = htot[hh]
+            line += f"<td style='{td}color:{col(ht)};'>{money(ht)}</td>"
             cv = cum_at[hh]
             line += f"<td style='{td}color:{col(cv)};'><b>{money(cv)}</b></td>"
             P.append(line + "</tr>")
         P.append("</table></div>")
-
-    # ===== Per-coin x hour — REAL money (LIVE fills x market winner; ledger has no LIVE pnl) =====
-    rht = {hh: sum(rcphour[hh][cn][2] for cn in COIN_NAMES if cn in rcphour[hh]) for hh in rcphour}
-    rcum = 0.0
-    rcum_at = {}
-    for hh in sorted(rcphour):
-        rcum += rht[hh]
-        rcum_at[hh] = rcum
-    rshow = sorted(rcphour)[-HOURS:]
-    if rshow:
-        netreal = sum(rper.get(cn, [0, 0.0, 0, 0, 0.0])[4] for cn in COIN_NAMES)
-        P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour &mdash; <span style='color:#067d06;'>REAL money</span> "
-                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(realized $ / win% &middot; n &middot; "
-                 f"&Sigma;cum; last {len(rshow)}h, CST)</span></h3>")
-        P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
-        hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
-        for cn in COIN_NAMES:
-            hdr += f"<th style='{th}'>{cn}</th>"
-        hdr += f"<th style='{th}'>&Sigma;cum</th>"
-        P.append(hdr + "</tr>")
-        for hh in rshow:
-            line = f"<tr><td style='{tdl}'>{hh}</td>"
-            for cn in COIN_NAMES:
-                n, wins, pnl = rcphour[hh].get(cn, [0, 0, 0.0])
-                if n:
-                    inner = (f"<b>{pnl:+.2f}</b><br><span style='font-size:10px;color:#999;'>"
-                             f"{wr(n, wins)} &middot; {n}</span>")
-                    line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
-                else:
-                    line += f"<td style='{td}color:#bbb;'>-</td>"
-            cv = rcum_at[hh]
-            line += f"<td style='{td}color:{col(cv)};'><b>{cv:+.2f}</b></td>"
-            P.append(line + "</tr>")
-        P.append("</table></div>")
-        resid = (rpnl - netreal) if rpnl is not None else None
-        acct_txt = f"${rpnl:+.2f}" if rpnl is not None else "n/a"
-        resid_txt = f"${resid:+.2f}" if resid is not None else "n/a"
-        P.append(f"<div style='font-size:11px;color:#999;margin:4px 0;'>Reconstructed from LIVE fills &times; the "
-                 f"market's actual winner (the ledger logs no LIVE settle). <b>Net trade pnl ${netreal:+.2f}</b> "
-                 f"(this is the strategy's real trading result) vs account move <b>{acct_txt}</b> &mdash; the "
-                 f"<b>{resid_txt}</b> residual is NOT trades (fees=$0): a deposit-baseline / open-positions "
-                 f"valuation gap, under investigation.</div>")
 
     # ===== LIVE PARAMETERS (so every number above is traceable to an exact config) =====
     lp = live_params()
