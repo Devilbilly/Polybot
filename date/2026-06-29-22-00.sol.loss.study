@@ -1,0 +1,149 @@
+================================================================================
+POLYBOT OUTLIER POST-MORTEM
+Hour: 2026-06-29-22-00 CST  (UTC 14:00-14:59)   Coin: SOL   Net: -$61.55
+2nd outlier AFTER the gate deploy (buy_p 0.78 + chop gate, deployed 19:23 CST 2026-06-29)
+Prior post-deploy outlier (btc h20) verdict: VARIANCE (clean post-entry reversals).
+================================================================================
+
+VERDICT: VARIANCE  --  same post-entry-reversal / chop-gate-blind-spot pattern as
+btc h20. The chop gate DID engage on SOL (per-coin SOLUSDT spot present 100% in the
+trader's authoritative DB). All 4 losses were directional moves that cleared the gate
+then reversed by settle. SOL-specific bad hour (BTC/ETH both green same hour); 6/10
+vs 83% all-time is binomial p=0.073 -- unusual but inside normal variance. KEEP THE GATE.
+
+--------------------------------------------------------------------------------
+WHAT HAPPENED
+--------------------------------------------------------------------------------
+12 SOL rounds (32-43). 2 no-fired (R34, R35 -> gate/band never satisfied, pnl=0).
+10 fired: 6 wins / 4 losses = 60% win (matches brief: win 60%, n=10, fire 83%).
+
+Losses are NOT concentrated in one bad market -- they are 4 separate rounds, each a
+clean ~-$23/-$24 favorite-settles-against loss, spread across the hour:
+
+  R32 win  +$6.16    R38 win  +$4.74
+  R33 LOSS -$24.09   R39 LOSS -$23.14
+  R34 nofire 0       R40 win  +$5.85
+  R35 nofire 0       R41 win  +$6.06
+  R36 win  +$5.10    R42 LOSS -$22.86
+  R37 LOSS -$23.61   R43 win  +$4.23
+  losses sum -$93.70, wins sum +$32.15, net -$61.55.
+
+BROAD vs SOL-SPECIFIC: hour 22 was SOL-specific, not a market-wide bad hour:
+  btc: fired 9, win 89%, pnl +$20.53
+  eth: fired 9, win 89%, pnl +$22.96
+  sol: fired 10, win 60%, pnl -$61.55   <-- only SOL bled
+BTC and ETH printed normal green the same hour. This is a single-coin variance cluster.
+
+--------------------------------------------------------------------------------
+DID THE GATE ENGAGE ON SOL?   ** YES -- the gate engaged. **
+--------------------------------------------------------------------------------
+THE LINCHPIN, RESOLVED (and it is the OPPOSITE of the trap the brief flagged):
+
+There are TWO DBs with a spot/strike column, written by two DIFFERENT code paths:
+
+  * polymarket.db  = the LIVE TRADER's DB (run_multi, db_path="polymarket.db").
+    live.py:508  spot_fn = (lambda s=sym: fetch_spot(s)) if (sym and fetch_spot) ...
+    -> per-coin spot fetched for EVERY coin (sym = SOLUSDT for sol).
+    SOL spot/strike coverage in polymarket.db this hour = 3217/3217 ticks = 100%.
+    e.g. R32 spot~73.2 strike~73.15. This is the feed the chop gate reads (tick.spot).
+
+  * market_data.db = the passive MONITOR's DB (record_multi, db_path="market_data.db").
+    live.py:605  spot_fn = fetch_spot if is_btc else None
+    -> BTC-ONLY spot; sol/eth/xrp recorded as 0 BY DESIGN in the monitor DB.
+    SOL spot in market_data.db = 0/3221 (and 0.0% across ALL 641 sol markets, all-time;
+    eth 0%, xrp 0%, btc 99.8%).
+
+The brief tentatively designated market_data.db as the gate's source and warned that
+SOL spot=0 there would mean "gate NOT engaging." That market_data.db zero is REAL but
+it is a recording artifact of the monitor sleeve (is_btc gate at line 605), NOT the
+trading path. The gate runs inside the trader, on the trader's tick, sourced from
+polymarket.db's per-coin feed -- where SOL spot is fully present. So there is NO
+per-coin spot coverage gap on the trading path. The gate engaged on SOL.
+
+Gate code (strategies.py:58-67), for reference -- it no-ops only when spot/strike<=0:
+    if self.chop_min <= 0.0 or tick.spot <= 0.0 or tick.strike <= 0.0: return True
+    return abs(tick.spot - tick.strike)/tick.strike >= self.chop_min
+Since SOL tick.spot was non-zero (polymarket.db), this branch evaluated the real
+preabsmove on every SOL round -- it did NOT fall through to the no-op.
+
+GATE BEHAVIOR THIS HOUR (per-round, chop_min ~0.00056):
+  - 10/12 fired rounds: preabsmove at entry ranged 0.00095 - 0.00261, all >= 0.00056
+    -> gate PASS (legitimate conviction move present). 100% of fired rounds had a real,
+    above-threshold directional move. The gate was not rubber-stamping flat rounds.
+  - 2/12 (R34, R35): no in-band/gate entry -> correctly skipped. R34 settled NO vs an
+    up-strike, R35 settled NO -- the gate/band sat these out as intended.
+  Per-coin SOL spot coverage the gate could act on this hour: 12/12 rounds (100%).
+
+--------------------------------------------------------------------------------
+REVERSAL PATTERN
+--------------------------------------------------------------------------------
+All 4 losses are post-entry REVERSALS -- the underlying moved with conviction in the
+bought direction (clearing the gate honestly on round-open->entry data), then reversed
+by settle. This is the chop gate's by-design blind spot (it only sees open->entry, never
+post-entry), identical to btc h20.
+
+Per loss round (dir@entry = spot-vs-strike the gate cleared on; move entry->settle):
+  R33 bought NO  | dir@entry -0.00203 (down, cleared)  | entry->settle +0.00231 (UP)   REVERSAL
+  R37 bought NO  | dir@entry -0.00151 (down, cleared)  | entry->settle +0.00386 (UP)   REVERSAL
+  R39 bought NO  | dir@entry -0.00219 (down, cleared)  | entry->settle +0.00452 (UP)   REVERSAL
+  R42 bought YES | dir@entry +0.00247 (up,   cleared)  | entry->settle -0.00164 (DOWN) REVERSAL
+Every loss = direction at entry is OPPOSITE the move to settle. Not one was a flat
+round the gate should have skipped -- each had a real, above-threshold move that then
+reversed. Winners, by contrast, held direction (e.g. R43 dir +0.00205 -> +0.00778).
+
+INDEPENDENT BINANCE SOLUSDT 1m CONFIRMATION (box reaches Binance klines fine):
+  R33 14:05->14:10 opened 73.76, fell to 73.01 intra-round (-1.0%), then chopped back
+      up toward strike by settle -- the bot caught the down leg (NO), price recovered.
+  R37 14:25->14:30 +0.4%, R39 14:35->14:40 +0.2% choppy up after an early dip,
+  R42 14:50->14:55 ran +1.0% up (bot was YES) but the Polymarket settle landed NO 73.07
+      vs strike 73.01 -- a near coin-flip settle on a marginal move.
+SOL was in a chop/whipsaw regime this hour: 73.0-73.8 oscillation, repeated direction
+flips within 5-min windows -- exactly the regime that defeats a momentum-confirmation
+gate via reversal, not via the flat-round failure mode.
+
+--------------------------------------------------------------------------------
+ENTRY PRICES
+--------------------------------------------------------------------------------
+All fired entries respected the new 0.78 floor (buy_p=0.78). Favorite-side entry prices
+this hour (ap1 for YES, 1-bid for NO) clustered 0.78-0.83:
+  YES-side wins: 0.78, 0.79, 0.82, 0.78, 0.83   NO-side: ~0.77-0.80
+  Losses entered at favorite prices 0.79-0.81 -- normal favorites, not stretched longshots.
+Floor is working; nothing entered below 0.78. No mispriced/junk entries -- these were
+ordinary 80c favorites that lost to reversal.
+
+--------------------------------------------------------------------------------
+vs NORMAL
+--------------------------------------------------------------------------------
+SOL all-time fav_hold fired: 438 rounds, 364 wins = 83.1% win.
+This hour: 6/10 = 60%.
+One-tailed binomial P(X<=6 | n=10, p=0.831) = 0.073  (p=0.84 -> 0.061).
+Unusual-ish but does NOT clear the 0.05 bar. Across many coin-hours per day, a 6/10
+SOL hour at p~0.07 is expected to surface regularly -- textbook variance, not a regime
+break. Loss magnitudes (~-$23 each) are consistent with the ~$25/trade notional and a
+clean favorite-against settle (no oversized/fat-finger loss).
+
+--------------------------------------------------------------------------------
+ACTION
+--------------------------------------------------------------------------------
+1. KEEP THE GATE. 2nd post-deploy outlier, and like btc h20 it is a clean reversal
+   cluster, not a gate failure. Two clean post-deploy reversals strengthen the
+   "keep the gate, it's variance" conclusion.
+2. NO per-coin spot coverage bug on the trading path. The market_data.db SOL spot=0 is
+   a known monitor-side artifact (record_multi is_btc gate, live.py:605) and is
+   irrelevant to live trading. (Optional, non-urgent cosmetic: flip line 605 to fetch
+   per-coin spot so the monitor DB matches the trader DB and future audits aren't
+   misled by the 0s -- but this changes NOTHING about trading or the gate.)
+3. The reversal blind spot is inherent to an open->entry momentum gate and is the price
+   of the edge; do not try to "fix" it with a post-entry reversal stop without separate
+   validation -- a stop_p already exists (reversal exit) and these still lost, meaning
+   the reversals completed faster than the stop could protect on a 5-min window.
+4. Continue monitoring: only escalate to SIGNAL if SOL strings multiple sub-70% hours
+   or if losses stop being reversals (i.e. start being flat rounds the gate let through).
+
+================================================================================
+DATA PROVENANCE (read-only, nothing changed on box)
+  polymarket.db  sessions/session_strategy/ticks (trader DB, per-coin spot 100% for SOL)
+  market_data.db ticks (monitor DB, btc-only spot by design)
+  polybot/strategies.py:58-67 (chop gate), polybot/live.py:508 & 605 (spot wiring)
+  Binance api.binance.com/api/v3/klines SOLUSDT 1m, UTC 14:00-15:00
+================================================================================
