@@ -123,6 +123,8 @@ def live_params():
         pass
     es = sh("systemctl show polybot-trade -p ExecStart --value")
     mode = "live (real money)" if "--live" in es else ("dry-run" if "--dryrun" in es else "paper")
+    am = re.search(r"--assets\s+([a-z,]+)", es)      # trader may trade a subset (recorder still all 4)
+    assets = ", ".join(am.group(1).split(",")) if am else "btc, eth, sol, xrp"
     commit = sh("cd /home/palacedeforsaken/Polybot && git rev-parse --short HEAD 2>/dev/null")
     if not commit or commit == "?":          # box isn't a git checkout -> show when the config last changed
         try:
@@ -130,7 +132,7 @@ def live_params():
             commit = "cfg edited " + time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(os.path.getmtime(CFG)))
         except Exception:
             commit = "?"
-    return dict(strat=strat, exec=exec_d, run=run_d, mode=mode, commit=commit, cfg=CFG)
+    return dict(strat=strat, exec=exec_d, run=run_d, mode=mode, commit=commit, cfg=CFG, assets=assets)
 
 
 def latest_log():
@@ -336,6 +338,43 @@ def main():
                  f"<span style='color:#999;font-size:11px;'>Real mirrors paper entries so they should be positively "
                  f"correlated; gap = stake size / slippage / proxy noise.</span></div>")
 
+    # ===== Per-coin x hour (pnl / win% / n=trades / fire%) =====
+    # Separate pass over rows that does NOT skip p==0, because fire% needs the opportunity count
+    # (every round, traded or not). coin is the session_id suffix (multi-<ts>-btc -> btc).
+    chx = defaultdict(lambda: defaultdict(lambda: [0.0, 0, 0, 0]))   # hr -> coin -> [pnl,fires,wins,opps]
+    for ts, st, p, sid in rows:
+        coin = (sid or "").rsplit("-", 1)[-1]
+        if coin not in COIN_NAMES:
+            continue
+        hh = time.strftime("%m-%d %H", time.gmtime(ts + 8 * 3600))
+        b = chx[hh][coin]; b[3] += 1
+        if p != 0:
+            b[0] += p; b[1] += 1
+            if p > 0:
+                b[2] += 1
+    showc = sorted(chx)[-HOURS:]
+    if showc:
+        P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour "
+                 f"<span style='font-size:11px;color:#999;font-weight:400;'>(last {len(showc)}h, CST &middot; "
+                 f"pnl / win% &middot; n &middot; fire%)</span></h3>")
+        P.append("<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;background:#fff;border-radius:8px;'>")
+        hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
+        for cn in COIN_NAMES:
+            hdr += f"<th style='{th}'>{cn}</th>"
+        P.append(hdr + "</tr>")
+        for hh in showc:
+            line = f"<tr><td style='{tdl}'>{hh}</td>"
+            for cn in COIN_NAMES:
+                pnl, fires, wins, opps = chx[hh].get(cn, [0.0, 0, 0, 0])
+                if opps:
+                    inner = (f"<b>{money(pnl)}</b><br><span style='font-size:10px;color:#999;'>"
+                             f"{wr(fires, wins)} &middot; {fires} &middot; {wr(opps, fires)}</span>")
+                    line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
+                else:
+                    line += f"<td style='{td}color:#bbb;'>-</td>"
+            P.append(line + "</tr>")
+        P.append("</table></div>")
+
     # ===== LIVE PARAMETERS (so every number above is traceable to an exact config) =====
     lp = live_params()
     modecol = "#067d06" if "live" in lp["mode"] else "#888"
@@ -366,7 +405,9 @@ def main():
              f"min price <code>{e['min_price']}</code> &middot; stale-book gate <code>{e['desync_tol']}</code> &middot; "
              f"signature_type <code>{e['signature_type']}</code> &middot; BUY-only<br>"
              f"<b>run</b>: capital <code>${rn['capital_per_market']:.0f}</code>/market &middot; "
-             f"assets <code>btc, eth, sol, xrp</code> &middot; real stake ~$1/trade (1-share probe)</div>")
+             f"assets <code>{html.escape(lp['assets'])}</code> "
+             f"<span style='color:#999;'>(trader; recorder still records all 4)</span> &middot; "
+             f"real stake ~$1/trade (1-share probe)</div>")
 
     P.append("<p style='font-size:11px;color:#999;margin-top:14px;'>cum = running realized P&amp;L from the very start (reset-independent). "
              "The per-session $4000 total resets every 6h. Coins are current-session only.</p>")
