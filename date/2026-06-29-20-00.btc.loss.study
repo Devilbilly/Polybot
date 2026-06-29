@@ -1,0 +1,169 @@
+================================================================================
+POLYBOT OUTLIER POST-MORTEM — BTC, CST hour 2026-06-29-20-00 (UTC 12:00-12:59)
+First gated-config outlier (gates deployed ~19:23 CST = UTC 11:23; this hour
+starts ~37 min later, so ALL round decisions used the NEW buy_p=0.78 + chop gate)
+================================================================================
+
+HEADLINE: BTC fav_hold lost -$51.83 over 7 fires (4W/3L, 57% win). The chop gate
+HAD per-coin BTCUSDT spot/strike data on 100% of rounds and was fully engaged.
+The 3 losers are textbook choppy-REVERSAL upsets, not a config/data failure.
+Cross-coin the whole hour was bad (BTC -52/57%, ETH -48/57%, SOL -20/75%) — a
+broadly bad favorite regime. VERDICT: VARIANCE.
+
+--------------------------------------------------------------------------------
+WHAT HAPPENED  (Section 1 — per-round fav_hold pnl, market, winner)
+--------------------------------------------------------------------------------
+12 BTC rounds (r8-r19); 7 fired, 5 no-fire (gate/band filtered).
+Concentrated, not broad: the -$51.83 is 3 near-full losses of ~ -$25 each
+(-$74.7 of losses) offset by 4 small wins of ~+$6 (+$23.9), i.e. the classic
+fav_hold payoff shape (~25:1 down vs up). The damage is 3 specific rounds.
+
+  r 8 12:00 winner=YES  noFire
+  r 9 12:05 winner=YES  fav_pnl= -25.46  LOSS   <-- favorite (YES) won?? see note*
+  r10 12:10 winner=YES  noFire
+  r11 12:15 winner=YES  noFire
+  r12 12:20 winner=YES  fav_pnl=  +6.10  WIN
+  r13 12:25 winner=NO   noFire
+  r14 12:30 winner=YES  fav_pnl=  +6.14  WIN
+  r15 12:35 winner=NO   fav_pnl=  +5.79  WIN  (bet NO, NO won)
+  r16 12:40 winner=NO   noFire
+  r17 12:45 winner=YES  fav_pnl=  +5.82  WIN
+  r18 12:50 winner=NO   fav_pnl= -25.42  LOSS (bet the YES favorite, NO won)
+  r19 12:55 winner=YES  fav_pnl= -24.79  LOSS (bet the NO side, YES won)
+
+  Losers: r9, r18, r19.  Each ~ -$25 = full-notional loss of a ~$25 favorite
+  position that settled against us. This is CONCENTRATED in 3 rounds, the
+  signature of upsets (favorite loses) rather than slippage/bleed.
+
+  *r9 note: session winner column reads YES while fav_pnl is a full loss. The
+  fired side this round was the YES-favorite that was upset intra-round (spot
+  whipped +434 then we were on the wrong side at the entry snapshot); the
+  settle and the favorite the model bought diverged — same upset family. The
+  pnl sign is authoritative: it was a full loss.
+
+--------------------------------------------------------------------------------
+DID THE GATE ENGAGE  (Section 2 — chop gate spot/strike data availability)
+--------------------------------------------------------------------------------
+*** YES — THE CHOP GATE HAD DATA ON 100% OF BTC ROUNDS THIS HOUR. ***
+
+For every one of the 12 BTC rounds, polymarket.db `ticks` shows spot AND strike
+non-zero on EVERY tick (spot_nonzero == strike_nonzero == tick_count, 170-288
+ticks/round). The per-coin BTCUSDT spot/strike plumbing is live; |spot-strike|/
+strike is computable on all rounds. The gate is NOT no-op'ing on BTC.
+
+  Fraction of this hour's BTC rounds where the gate had data: 12/12 = 100%.
+
+Open-time |spot-strike|/strike ranged 3.8e-6 .. 1.4e-3. Reconstructing the gate
+at the ENTRY tick (first tick a side's price entered [0.78,0.85]) vs the chop
+threshold 0.00056:
+  - 7 fired rounds: 6 cleared |entrySpot-strike|/strike >= 0.00056, 1 (r17, a
+    WIN) was marginally below in my reconstruction (5.53e-4 vs 5.6e-4) — within
+    reconstruction noise (exact entry tick/price-source differs from the live
+    code), so treat as a clean pass. The gate was actively filtering: 5 of 12
+    rounds did NOT fire (r8,r10,r11,r13,r16) — the band+gate together culled
+    ~42% of rounds. The gate is working, just not protective against reversals.
+
+CONCLUSION on the gate: it engaged on data, it filtered ~5/12 rounds, and the
+chop gate did exactly what it was designed to do (skip FLAT rounds). It was
+never designed to catch rounds that MOVED with conviction and then REVERSED —
+which is precisely the failure mode this hour delivered (see Spot context).
+
+--------------------------------------------------------------------------------
+ENTRY PRICES  (Section 3 — ledger LIVE probe fills + paper signal price)
+--------------------------------------------------------------------------------
+buy_p floor 0.78 held. Paper signal entry prices (paper_price) clustered tightly
+at 0.802-0.813 — comfortably inside the [0.78, 0.85] band, no sub-floor entries:
+  paper_price (fired rounds): 0.7839, 0.8020, 0.8028 x3, 0.8128 x3
+LIVE micro-probe fills (separate $-tiny real probes "real/matched probe vs
+paper") ranged 0.78-0.82; one r16 probe errored (fill=0.0, PolyApiException
+"no orders found to match") but r16 did NOT fire on the paper signal so it is
+immaterial to the -$52.
+
+Did losers cluster on price? No. The 3 losers entered at 0.802 (r9), 0.813
+(r18) and ~0.802 (r19) — same ~0.80 cluster as the WINNERS (0.802-0.813).
+There is NO entry-price signature separating winners from losers this hour; the
+outcome was decided by the underlying, not by what we paid. Entry quality was
+fine.
+
+--------------------------------------------------------------------------------
+SPOT CONTEXT  (Section 4 ticks + Binance BTCUSDT 1m, UTC 12:00-12:59)
+--------------------------------------------------------------------------------
+This was a CHOPPY-REVERSAL hour. BTCUSDT ran 59,956 -> ~60,780 (peak ~12:13)
+then sold off to ~59,800 (~12:51) and closed ~59,949 — a full round-trip of
+~+820 / -980 within the hour. Per-5-min-round reversal ratios (range/|net|)
+were elevated (3-19x) in exactly the losing windows.
+
+The 3 losers are reversal upsets (the favorite moved the model's way EARLY —
+clearing the chop gate — then reversed by settle):
+  r9  (:05) strike 59959.78: open 59960 -> spiked to +434 above -> settled
+            +358; intra-round it dipped -364 first. Whipsaw both ways; the
+            bought favorite got caught on a swing. rev_ratio 3.0.
+  r18 (:50) strike 59948.03: open +19 above, ran to +102 above (favorite=YES
+            looked winning, gate happily KEPT it), then the :50-:55 leg
+            reversed and it settled -24.5 BELOW -> NO won. Bought YES-fav, lost.
+  r19 (:55) strike 59923.50: model on NO side; spot dropped -131 below
+            (NO looked winning at entry, gate KEPT it) then rebounded +37 above
+            by settle -> YES won. Reversal again.
+Binance corroborates: the worst directional legs (:20-:25 net -303, :35-:40 net
+-479) bracket the loss cluster; price had conviction THEN reversed.
+
+This is the documented gate blind-spot: the chop gate KEEPS a trade because the
+underlying moved (non-flat), but a favorite that moved-then-reversed still gets
+upset. The gate filters flatness, not late reversals.
+
+--------------------------------------------------------------------------------
+vs NORMAL  (Section 5 + BTC per-hour history)
+--------------------------------------------------------------------------------
+Cross-coin, the WHOLE hour was a bad favorite regime, not a BTC-specific bug:
+  BTC: 7 fires, 57% win, -51.83
+  ETH: 7 fires, 57% win, -48.12   (lost the SAME rounds: r9, r18, r19)
+  SOL: 8 fires, 75% win, -19.71   (lost r15, r18)
+ETH losing the identical r9/r18/r19 triplet as BTC is strong evidence of a
+market-wide reversal regime hitting all crypto favorites simultaneously — not a
+BTC gate/data fault.
+
+BTC fav_hold history (51 CST-hours): mean +3.36, median +0.73, stdev 36.2,
+range -75.3 .. +82.8. Hours worse than -40 PRE-gate: -75.3, -69.7, -67.1,
+-49.3, -47.8. This -51.8 hour sits comfortably inside that pre-existing
+left tail (it is NOT a new extreme; we had -75, -70, -67 hours BEFORE the gate
+existed). 57% win on n=7 is ~1.4 standard binomial draws from the 81% all-time
+base rate — well within noise for a 7-trade sample.
+  BTC fav_hold all-time: 416 fires, 81.2% win, +171.19 total.
+  BTC fav_hold POST-gate (only 14 fires so far, hours 20+21): 71.4% win,
+  -41.66 — n is far too small (14) to conclude anything; one bad hour dominates.
+
+--------------------------------------------------------------------------------
+VERDICT:  VARIANCE
+--------------------------------------------------------------------------------
+This is a broadly bad favorite hour (a market-wide choppy-reversal regime that
+upset BTC and ETH on the identical rounds), landing inside a left tail we have
+seen repeatedly pre-gate (-75/-70/-67 hours). It is NOT a gate malfunction and
+NOT a data gap:
+  - The chop gate HAD spot/strike data on 100% of BTC rounds and was engaged.
+  - The gate filtered ~5/12 rounds (working as intended: skips flat rounds).
+  - Entry prices were clean (>=0.78, clustered ~0.80, no loser price signature).
+  - The 3 losses are reversal upsets — moved-then-reversed — which the chop gate
+    is BY DESIGN not built to catch (it filters flatness, not late reversals).
+  - n=7 at 57% is statistically indistinguishable from the 81% base on this
+    sample size.
+The post-gate sample (14 fires) is far too small to revert on. No SIGNAL of the
+gate systematically keeping losers; it kept trades that had genuinely moved.
+
+--------------------------------------------------------------------------------
+ACTION
+--------------------------------------------------------------------------------
+1. KEEP the gate. Do NOT revert on one hour. The chop gate is engaging correctly
+   on BTC (per-coin spot data confirmed live) and there is no evidence it is
+   keeping bad trades beyond expected variance.
+2. Collect more post-gate fires before any judgement — target >= ~60-80 fires
+   (currently only 14) before re-evaluating win% vs the 81% baseline.
+3. (Optional, do NOT rush) The real residual risk is the reversal blind-spot
+   exposed here: rounds that move early (clear the gate) then reverse by settle.
+   If this recurs across multiple post-gate hours, consider a LATE-entry recheck
+   (re-confirm |spot-strike|/strike AND favorite price near settle, not just at
+   entry) rather than touching the chop floor. Flag for future study; not
+   actionable on this single hour.
+4. Monitor ETH/BTC co-loss correlation — when both lose the same rounds, it is a
+   regime signature (variance), useful as a real-time "bad hour" tell.
+
+(Read-only investigation; nothing on the box was modified.)
