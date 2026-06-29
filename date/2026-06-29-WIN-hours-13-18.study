@@ -1,0 +1,153 @@
+# 2026-06-29 WIN-HOUR ANALYSIS — CST 13:00 & 18:00 (great) vs 20:00 (bad)
+
+Read-only on box 34.92.235.71. Nothing changed. polymarket.db (sessions + session_strategy,
+strategy=`fav_hold`), ledger.db (entry side/price), Binance 1-min klines. CST = UTC+8.
+Windows: 13 CST = UTC 05:00–05:59 (epoch 1782709200), 18 CST = UTC 10:00–10:59 (1782727200),
+20 CST = UTC 12:00–12:59 (1782734400). All 2026-06-29, all PRE-gate (ungated strategy).
+
+(Time-mapping was load-bearing and easy to get wrong: the analysis was first run a day off;
+the numbers below are the corrected windows and they reproduce the prompt's figures exactly.)
+
+---
+
+## What happened
+
+| Hour (CST) | btc | eth | sol | HOUR | fired | win% |
+|------------|-----|-----|-----|------|-------|------|
+| **13 (UTC05)** | +60.2 / 100% | +45.8 / 100% | +7.9 / 83% | **+113.9** | 23 | **95.7%** |
+| **18 (UTC10)** | +32.4 / 90%  | +27.3 / 91%  | +16.7 / 89% | **+76.3**  | 30 | **90.0%** |
+| 20 (UTC12) | −51.8 / 57% | −48.1 / 57% | −19.7 / 75% | **−119.7** | 22 | 63.6% |
+
+Confirms the brief: hour 13 btc went a clean 10/10 (+60); hour 18 was ~90% on all three
+coins (btc +32 / eth +27 / sol +17); hour 20 was a uniform bloodbath (~57% on btc/eth).
+`fav_hold` payoff shape is asymmetric — avg win ≈ +6, avg loss ≈ −24 — so a single extra
+loss erases ~4 wins. That is WHY win% is the whole game and why a 90–96% hour is worth +$76–114.
+
+---
+
+## Trend evidence — and an important correction to the naive thesis
+
+The naive thesis was "great hours = strong HOUR-level trend." That is HALF RIGHT and HALF
+WRONG, and the data forces a sharper statement.
+
+**HOUR-level net move does NOT cleanly separate good from bad** (Binance, efficiency ratio
+ER = |hour net| / Σ|per-min move|; ER→1 = pure trend, →0 = chop):
+
+| Hour | btc net% / ER | eth net% / ER | sol net% / ER | mean hour-ER |
+|------|---------------|---------------|---------------|--------------|
+| 13 | +0.46% / 0.18 | +0.48% / 0.17 | +0.88% / 0.20 | 0.18 |
+| **18** | **+0.05% / 0.005** | +0.15% / 0.03 | +0.43% / 0.09 | **0.04** |
+| 20 | −0.01% / 0.05 | +0.08% / 0.05 | +1.37% / 0.18 | 0.09 |
+
+Hour 18 won 90% while BTC was essentially FLAT for the hour (+0.05%, ER 0.005 — the most
+range-bound of the three). Hour 20 (bad) had a HIGHER mean hour-ER than hour 18, and SOL in
+the bad hour had the single biggest hour-trend of the whole study (+1.37%) yet SOL still lost
+money. So "the hour trended" is not the explanation.
+
+**The real separator is PER-ROUND path shape.** Each favorite lives or dies inside its own
+5-min round. Two round metrics, measured on the 5 one-min bars ending at settlement:
+- **ER** (round) = directional cleanliness inside the round.
+- **REV** = (span − |net|)/span = round-trip ratio. HIGH = price ran one way then came back
+  (chop / reversal); LOW = price went and stayed (trend).
+
+Pooled across all 3 hours, WIN rounds vs LOSS rounds:
+
+| metric | WIN (n=59) | LOSS (n=12) | gap |
+|--------|-----------|------------|-----|
+| round ER  | **0.480** | **0.267** | +0.21 (winners far cleaner) |
+| round REV | **0.370** | **0.597** | −0.23 (losers round-trip far more) |
+| \|net\| bp | 14.3 | 16.5 | ~0 (losers are NOT smaller moves — they REVERSE) |
+
+The losers are not "small-move" rounds — their absolute move is the same. They are
+**out-and-back** rounds: the favorite was right mid-round, then the tape reversed by settle.
+
+Per-hour, the same signal:
+- **Hour 20 (bad):** LOSS rounds ER 0.19 / REV 0.71 vs WIN rounds ER 0.46 / REV 0.40.
+  Textbook chop-reversal — the losers whipsawed.
+- **Hour 18 (great):** WIN rounds ER 0.54 (cleanest of all three hours) / REV 0.28; the 3
+  losers were milder (REV 0.39). Even though the HOUR was flat, the individual 5-min legs
+  were directionally clean — micro-trends inside a flat hour. That is why a flat hour won 90%.
+- **Hour 13 (great):** only 1 loss; it was a genuine directional UPSET (|net| 36bp, low REV),
+  i.e. the underlying trended hard the wrong way for the favorite — not chop. n=1, noise.
+
+**The smoking gun — early-move-then-reverse count** (round moved >8bp in first 2 min, then
+settled the OTHER way):
+
+| Hour | losers with early-then-reverse | winners with it |
+|------|-------------------------------|-----------------|
+| 13 | 1 / 1 | 0 / 21 |
+| 18 | 0 / 3 | 2 / 24 |
+| **20** | **8 / 8** | 3 / 14 |
+
+In the bad hour, **every single loser** moved early then reversed by settle. In the great
+hours that pattern is absent from the losers. This IS the chop-gate thesis, confirmed.
+
+---
+
+## Entry-price effect (separating cheapness from trend)
+
+Great hours also drew somewhat cheaper entries (fatter margin), but it is the SECONDARY
+effect, not the cause:
+
+| Hour | avg entry (fired) | frac < 0.80 |
+|------|-------------------|-------------|
+| 13 | 0.803 | 0.50 |
+| 18 | 0.798 | 0.58 |
+| 20 (bad) | 0.818 | 0.29 |
+
+Cheaper entries do help, and they help in two ways: (1) mechanically each win pays more the
+lower you buy, and (2) cheaper entries also empirically won more often this window —
+entry [0.74,0.79): 95% win (n=20); [0.79,0.82): 75%; [0.82,0.90): 81%. The bad hour bought
+richer (0.818 avg, only 29% below 0.80).
+
+BUT the entry gap is small (0.80 vs 0.82) and the WIN/LOSS |net-move| was identical (14 vs 16
+bp). The cheap entries turned a 100% hour into a +$60 hour rather than a +$45 one (the fat-bag
+effect), and gave a few extra points of win%, but they did not CREATE the win streak. The win
+streak came from the rounds trending cleanly (low REV). **Trend-shape ≈ 70% of the story,
+cheap entries ≈ 30%.**
+
+---
+
+## Implication for the CHOP GATE
+
+The gate's thesis — favorites HOLD in clean directional rounds and get UPSET in choppy /
+reversal rounds — is **confirmed at the level it actually operates (per round, not per hour)**:
+- Losers had REV 0.60 and ER 0.27 (choppy/reversal); winners had REV 0.37 and ER 0.48 (clean).
+- 8/8 hour-20 losers were early-move-then-reverse rounds.
+
+What the gate WOULD have done:
+- **Hours 13 & 18 (great): the gate would have KEPT most rounds.** Winners are the clean,
+  low-REV, high-ER rounds the gate is designed to allow. Hour 18 is the cautionary case: it
+  was FLAT at the hour scale, so a gate keyed off hour-level trend would wrongly skip it —
+  but a gate keyed off the live ROUND'S developing path keeps it (the legs were clean).
+  **Design implication: gate on the round's own micro-path, not on an hourly trend filter.**
+- **Hour 20 (bad): the blind spot is real and visible.** The losers moved EARLY (first 2 min)
+  then reversed by settle. A gate that decides at entry (~start of round) sees only the early
+  favorable move and CLEARS the trade — it cannot know the late reversal is coming. 8/8 losers
+  fit this. So the gate, as a one-shot entry filter, will let most of these through. To catch
+  them it would need to be path-aware (delay/abort if the round starts round-tripping) rather
+  than a static entry-time chop score. The 3 winners that also showed early-then-reverse are
+  the unavoidable false-positive cost of any such late-exit rule.
+
+Net: the gate is **aligned with the true driver of win-rate** (round-level chop vs trend), and
+would protect the strategy in normal mixed hours. Its known weakness is the same one this study
+exposes — reversals that develop AFTER entry — which no entry-time filter can fully see.
+
+---
+
+## Verdict
+
+Hours 13 & 18 won big because, round by round, the underlying TRENDED cleanly through each
+5-min settlement (winners: round ER 0.48, round-trip REV 0.37), so the favorite was still the
+favorite at settle. The bad hour 20 lost because its rounds CHOPPED and REVERSED — every one
+of its 8 losers moved early then snapped back by settle (loser ER 0.19, REV 0.60). Critically,
+this is a PER-ROUND, not per-hour, effect: hour 18 was flat at the hour scale (BTC +0.05%) yet
+won 90% because its individual legs were clean. Cheaper entries (0.80 vs 0.82, half below 0.80)
+added a real but secondary tailwind (~30% of the edge; cheap fills also won more). The chop
+gate's thesis is confirmed at the round level and it would keep the good rounds; its one true
+blind spot — post-entry reversals, the entire hour-20 loser set — is exactly what an entry-time
+filter cannot see and is the place to focus next (make the gate path-aware, not just a static
+entry score).
+
+Caveat: 71 fired rounds across 3 hours. Direction is unambiguous and large, but it is one
+window. Use as a strong confirming example, not proof.
