@@ -352,6 +352,13 @@ def main():
             b[0] += p; b[1] += 1
             if p > 0:
                 b[2] += 1
+    # running cumulative TOTAL pnl (all coins) per hour -> the Σcum last column (trend of the book)
+    htot = {hh: sum(chx[hh][cn][0] for cn in COIN_NAMES if cn in chx[hh]) for hh in chx}
+    cumrun = 0.0
+    cum_at = {}
+    for hh in sorted(chx):                       # accumulate over ALL hours, not just the shown window
+        cumrun += htot[hh]
+        cum_at[hh] = cumrun
     showc = sorted(chx)[-HOURS:]
     if showc:
         P.append(f"<h3 style='margin:14px 0 4px;'>Per-coin x hour "
@@ -361,6 +368,7 @@ def main():
         hdr = f"<tr><th style='{tdl.replace('1px solid #eee','2px solid #ddd')}'>hour</th>"
         for cn in COIN_NAMES:
             hdr += f"<th style='{th}'>{cn}</th>"
+        hdr += f"<th style='{th}'>&Sigma;cum</th>"
         P.append(hdr + "</tr>")
         for hh in showc:
             line = f"<tr><td style='{tdl}'>{hh}</td>"
@@ -372,6 +380,8 @@ def main():
                     line += f"<td style='{td}color:{col(pnl)};'>{inner}</td>"
                 else:
                     line += f"<td style='{td}color:#bbb;'>-</td>"
+            cv = cum_at[hh]
+            line += f"<td style='{td}color:{col(cv)};'><b>{money(cv)}</b></td>"
             P.append(line + "</tr>")
         P.append("</table></div>")
 

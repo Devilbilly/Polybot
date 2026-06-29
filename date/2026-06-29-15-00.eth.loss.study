@@ -1,0 +1,82 @@
+# 2026-06-29-15-00 CST -- ETH -- LOSS -$62  (win 56%, n=9, fire 75%)
+
+_CST hour 2026-06-29-15-00 = UTC 07:00-07:59 (settlements), entries 06:57-07:52 UTC._
+_PnL figures are the PAPER signal at ~$1000/market notional. Real money was only ~$1/trade probes (LIVE fills below confirm the signal)._
+
+## What happened
+ETH traded 9 rounds (5-min up/down favorites), settling 5 wins / 4 losses = 55.6% win.
+Strategy-pnl sum = **-$61.82** (matches the -$62 outlier). The loss is **BROAD, not concentrated**:
+4 separate losing rounds, each ~-$23, against 5 wins of only ~+$4-7.
+
+| Rnd | Entry UTC | Bought | Entry px | Winner | PnL |
+|----:|-----------|:------:|---------:|:------:|------:|
+| 6   | 06:57:45  | NO (down)  | 0.760 | YES | -23.88 |
+| 7   |   --      | no trade   |  --   | NO  |   0.00 |
+| 8   | 07:08:36  | NO (down)  | 0.760 | NO  | +7.24  |
+| 9   | 07:13:59  | NO (down)  | 0.800 | YES | -23.47 |
+| 10  | 07:18:45  | YES (up)   | 0.770 | NO  | -22.88 |
+| 11  | 07:22:58  | NO (down)  | 0.790 | YES | -22.31 |
+| 12  |   --      | no trade   |  --   | YES |   0.00 |
+| 13  | 07:32:53  | NO (down)  | 0.760 | NO  | +6.40  |
+| 14  |   --      | no trade   |  --   | YES |   0.00 |
+| 15  | 07:42:48  | NO (down)  | 0.840 | NO  | +4.09  |
+| 16  | 07:48:28  | YES (up)   | 0.780 | YES | +6.11  |
+| 17  | 07:52:39  | YES (up)   | 0.760 | YES | +6.89  |
+
+The -$62 is pure payoff asymmetry, which is BY DESIGN for a favorite-buyer:
+avg loss **-$23.14** vs avg win **+$6.15**. Sum losses -$92.55, sum wins +$30.73, net -$61.82.
+Breakeven win% for this payoff = **79.0%**; ETH's baseline 82% clears it by a hair, so any
+sub-79% hour books a loss.
+
+## Entry prices
+Entries were normal, NOT clustered near the 0.85 ceiling: 0.76, 0.76, 0.80, 0.77, 0.79,
+0.76, 0.84, 0.78, 0.76. Only one trade (round 15, @0.84) was near the top -- and it **won**.
+The four losers entered at 0.76 / 0.80 / 0.77 / 0.79: middle-of-band, not thin-margin highs.
+
+**Execution was clean -- zero slippage.** Every LIVE fill landed at the intended price to
+4+ decimals (NO @ 0.7599999 vs intended 0.76; YES @ 0.7699999 vs 0.78 intended w/ book 0.77/0.78;
+NO @ 0.84 vs intended 0.84). fill_price == intended_price across the board; no adverse fills.
+
+## Spot context
+Binance ETHUSDT 1-min, UTC 06:55-08:00:
+open 1582.69, close 1580.67, **high 1584.90, low 1577.92**.
+Total range **$6.98 = 0.44%**; net move **-$2.02 = -0.13%**. This is **flat chop**, not a
+directional event -- ETH oscillated in a ~$5 band around 1580-1583 the entire hour.
+
+That is precisely the regime that upsets 5-min favorites: with spot barely moving, the
+side that closes the candle up-vs-down is a near coin-flip, yet the favorite is priced
+0.76-0.84. Per losing round the deciding move was tiny:
+- R9 settle 07:15: 07:10->07:15 close 1579.75->1581.83 (+$2.1 UP) flipped a NO bet.
+- R10 settle 07:20: 1581.83->1580.53 (-$1.3 DOWN) flipped a YES bet.
+- R11 settle 07:25: 1580.53->1580.28 (~$0.25, essentially flat) flipped a NO bet.
+Sub-$2 wiggles on a $1580 tape decided every loss. No reversal, no trend, no news spike.
+
+## vs normal
+ETH baseline this dataset: **300/366 = 81.97%** win over ~8 hours. This hour: 55.6%.
+Other ETH hours range 74.6%-93.8% win, with hourly pnl from -$145.87 to +$93.21 -- so
+-$62 is **not even ETH's worst hour** (28th 07:00 was -$146; 29th 16:00 was -$96).
+Binomial test at p=0.82: P(exactly 5/9) = 4.9%, **P(<=5 wins out of 9) = 6.2%**
+(expected wins = 7.4). A ~1-in-16 hour. Across 8+ observed ETH hours you expect to draw
+one like this. Uncommon, not anomalous; nowhere near a 3-sigma tail.
+("fire 75%" = 9 traded of 12 rounds = 75% fire rate; 3 rounds correctly stood down. Normal.)
+
+## Verdict: VARIANCE or SIGNAL
+**VARIANCE.** Unlucky coin-flips at roughly fair odds. The evidence is clean on every
+non-variance hypothesis:
+- NOT concentrated: 4 independent ~-$23 losses, not one blow-up.
+- NOT high entries: losers entered mid-band (0.76-0.80); the only 0.84 entry won.
+- NOT execution: every LIVE fill = intended price, zero slippage, no adverse book.
+- NOT a directional spot event: flat 0.44%-range chop, -0.13% net; losses came from
+  sub-$2 wiggles flipping near-50/50 5-min outcomes.
+The 55.6% result is within binomial noise of the 82% baseline (p=0.062). The big dollar
+figure is just the structural -$23-loss / +$6-win asymmetry of buying favorites, amplified
+by 4 losses landing in one hour.
+
+## Action
+**None required.** This is expected variance for a favorite-buying strategy; do not
+re-tune off a single hour. One standing watch-item (not triggered by this hour): the
+payoff math needs ~79% wins to break even and ETH sits at ~82%, a thin ~3pt margin.
+That is a STRATEGY-LEVEL fragility (favorites in flat chop are marginally overpriced),
+not a fault of this hour. If a real edge fix is wanted, it lives in entry-filtering for
+low-volatility/chop regimes (skip when realized 5-min vol is tiny, since favorites are
+most overpriced then) -- but that is a separate study, not an action item from -$62.

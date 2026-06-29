@@ -1,0 +1,92 @@
+# 2026-06-29-12-00 CST -- XRP -- LOSS -$100  (win 38%, n=8, fire 67%)
+
+CST 12:00 hour == UTC 04:00-04:59. PAPER signal at $1000/market notional. Real money was
+~$1 probes (mode=LIVE fills tiny, ~2 shares); the -$100 is the paper signal. XRP was still
+live this hour (stopped ~14:32 CST, ~2.5h later). Sum of the 8 nonzero round pnls = -$99.76.
+
+## What happened
+8 trades fired this hour (rounds 32-43; 12 rounds, 4 no-trade). 5 losses, 3 wins = 37.5% ~ 38%.
+The loss was BROAD, not 1-2 blowups -- five near-full -$24..-$26 losses dominate:
+
+  rnd  side  winner  pnl       entry  result   round window (UTC)
+  r32  NO    YES     -25.68    0.76   LOSS     04:00-04:05
+  r34  NO    NO       +4.29    0.00*  WIN      04:05-04:10  (*real fill 0 shares; paper won)
+  r36  YES   NO      -25.15    0.78   LOSS     04:15-04:20
+  r37  NO    YES     -16.76    0.75   LOSS     04:20-04:25  (smaller size -> -16 not -25)
+  r38  YES   YES      +6.57    0.78   WIN      04:25-04:30
+  r39  NO    NO       +5.15    0.83   WIN      04:30-04:35
+  r40  YES   NO      -24.39    0.76   LOSS     04:35-04:40
+  r42  NO    YES     -23.78    0.77   LOSS     04:45-04:50
+
+Losses split BOTH directions: 3 down-favorites (NO) lost, 2 up-favorites (YES) lost.
+Favorites got upset both ways -- the signature of a whippy tape pinning the strike, NOT a
+one-sided directional sweep that would flip only one side. Win 38% on 8 = exactly 3/8.
+"fire 67%" = trades fired / rounds (8/12).
+
+## Entry prices
+All entries in-band (0.75-0.83), i.e. NOT systematically bought-high; mix of band:
+  r32 NO 0.76 | r36 YES 0.78 | r37 NO 0.75 | r39 NO 0.83 | r40 YES 0.76 | r42 NO 0.77
+Execution (ledger, mode=LIVE real fills vs paper_price):
+  - Fills were AT or slightly BETTER than paper most rounds (e.g. r32 fill 0.7600 vs paper
+    0.7767; r42 fill 0.7700 vs paper 0.7911) -> no adverse slippage; if anything the real
+    fills got a better price than the paper mark. Paper pnl is the conservative case here.
+  - r34: real FILL = 0.0 price / 0.0 shares -> zero real fill (book too thin to fill the $1
+    probe), yet paper settled it as a +4.29 win. Counted as a paper win it did not really earn.
+  - r37: filled but smaller -> loss only -16.76 vs the ~-25 full losses.
+Depth at entry (market_data ticks, L1 ask size in the 0.76-0.85 band):
+  - XRP L1 book median ~8-22 shares per level (r36 med 8.7, r38 med 22, r42 single sample 10).
+  - Confirms the known thin XRP book (~21 vs BTC ~381). r40 had only n_ticks=8 for the whole
+    round (near-dead book). So: thin, yes -- but the bot did NOT buy high; entries were fine.
+Verdict on execution: NOT the cause. No adverse fills; real fills beat paper. The -$100 is a
+clean favorites-lost-at-settlement loss, not a slippage/microstructure loss.
+
+## Spot context
+Binance XRPUSDT 1-min, UTC 04:00-04:59:
+  Hour open 1.0509 -> close 1.0422, net -0.828%. High 1.0509 / low 1.0421, total range 0.84%.
+  Steady grind DOWN with constant reversals: 28 of 59 minute-to-minute direction flips;
+  sum|1m moves| 0.0298 vs net|move| 0.0087 -> chop ratio 3.43x (price travelled ~3.4x its net
+  displacement). Tight band, low amplitude, high reversal count = textbook XRP chop, but with a
+  mild persistent down-drift.
+Per-5min round close-to-close were tiny (mostly +/-0.05% to -0.22%), so most rounds settled on
+a near-coin-flip distance from strike -- exactly the regime where a 76-85c "favorite" carries
+almost no real edge and individual outcomes are near 50/50. The down-drift alone doesn't
+explain the losses (NO/down-favorites lost too), confirming chop-near-strike over direction.
+
+## vs normal
+XRP typical win ~78-83%. Observed 3/8 = 38%.
+Binomial (one-sided, P of <= 3 wins in 8):
+  p=0.78 -> 0.0158 (E[wins] 6.2) ; p=0.80 -> 0.0104 (E[wins] 6.4) ; p=0.83 -> 0.0050.
+So a result THIS bad or worse has ~1-1.6% probability per hour at the assumed true win rate.
+Unusual (roughly a 1-in-65 to 1-in-200 hour), but the sample is only 8 trades and the bot runs
+many coin-hours per day, so seeing one such tail hour somewhere is expected, not alarming. The
+dollar size (-$100) looks dramatic only because each loss is ~-$25 at $1000 notional on a ~0.78
+entry (lose ~0.78, the geometry amplifies a 5-loss cluster).
+
+## Verdict: VARIANCE or SIGNAL
+VARIANCE, with a SIGNAL-flavored backdrop -- but variance dominates THIS hour.
+  - For SIGNAL you'd want: a one-sided directional spot event flipping only one side of
+    favorites, OR bought-high/adverse-fill execution. Neither holds: losses hit BOTH
+    directions, entries were in-band, real fills beat paper, no slippage.
+  - The 38% is a ~1-1.5% tail draw on 8 trades. That is improbable for a single hour but fully
+    consistent with normal variance once you account for many coin-hours sampled per day.
+  - The one structural truth visible here: XRP's edge is THIN and FRAGILE. The book was thin
+    (L1 ~8-22, one round near-dead at 8 ticks; r34 couldn't even get a real fill), and the tape
+    was choppy near the strike (chop ratio 3.4x, 28 flips), so 5-min favorites behaved like
+    coin-flips. That fragility is WHY a bad 8-trade hour shows up as a clean -$100 cluster -- and
+    it is the same fragility the RCA flagged and that got XRP stopped ~2.5h later.
+Bottom line: this specific -$100 hour = bad-variance cluster (5 favorites lost across both
+directions in choppy-near-strike conditions), not a discrete signal/execution event. Do not
+over-claim from one hour; it is corroborating evidence for "XRP edge too thin," not a new cause.
+
+## Action
+- No code/exec fix indicated for this hour: fills were clean, entries in-band. Nothing to patch
+  at the microstructure level from this event.
+- Treat as confirming the existing thin-edge thesis. The later XRP stop (~14:32 CST) is the
+  correct response; this hour is one data point supporting it, not the trigger by itself.
+- If re-enabling XRP is ever considered: require a thicker-book gate (skip rounds where L1 size
+  in-band < threshold, e.g. < ~15-20 shares -- r34/r40 would have been skipped) and/or a chop
+  filter (skip when recent 1-min flip-rate / chop-ratio is high), since near-strike chop is
+  where the 76-85c favorite has no edge. Keep XRP notional below the other coins until win rate
+  is re-validated over a larger n.
+- Monitoring: flag any coin-hour with <= 3/8 wins for review, but do not act on a single
+  8-trade tail; require a multi-hour trend before concluding signal/regime change.

@@ -1,0 +1,105 @@
+# 2026-06-29-13-00 CST -- BTC -- WIN +$60  (win 100%, n=10, fire 83%)
+
+Data: polymarket.db (sessions + session_strategy), ledger.db (entries), Binance BTCUSDT 1m.
+CST hour 2026-06-29-13-00 == UTC 05:00:00-05:59:59. Read-only; nothing changed on the box.
+(Note: outlier hint said "fire 83%" = 10 trades fired out of 12 BTC sessions; 2 were no-trade. Confirmed.)
+
+## What happened
+
+12 BTC `multi-` sessions in the hour; 10 fired (`fav_hold`), 2 were no-trade
+(05:05 r45, 05:06 r46 -- favorite never in the [0.76,0.85] entry band). All 10 fired
+trades **won** -> +$60.22 PAPER signal pnl on the $1000/market notional. Cash compounded
+monotonically 992.73 -> 1045.70, i.e. no intra-hour drawdown at all -- a clean 10/10.
+
+Per-round (strat = fav_hold; pnl is the PAPER edge realized):
+
+| utc      | rnd | side | winner | paper entry | pnl    |
+|----------|-----|------|--------|-------------|--------|
+| 05:00:00 | 44  | NO   | NO     | 0.7728      | +7.244 |
+| 05:15:00 | 47  | NO   | NO     | 0.8529      | +4.282 |
+| 05:20:00 | 48  | YES  | YES    | 0.8428      | +4.648 |
+| 05:25:00 | 49  | YES  | YES    | 0.8028      | +6.151 |
+| 05:30:00 | 50  | YES  | YES    | 0.7728      | +7.409 |
+| 05:35:00 | 51  | YES  | YES    | 0.8036      | +6.203 |
+| 05:37:53 | 52  | NO   | NO     | 0.8328      | +5.126 |
+| 05:45:00 | 53  | YES  | YES    | 0.8428      | +4.785 |
+| 05:50:00 | 54  | YES  | YES    | 0.7928      | +6.739 |
+| 05:55:00 | 55  | YES  | YES    | 0.7728      | +7.631 |
+
+Side mix is balanced: 3 NO wins (05:00, 05:15, 05:38), 7 YES wins. This is NOT a
+single directional bet that happened to print -- the favorite flipped sides through the
+hour and the favorite won every time. That is the favorite-hold edge behaving as designed,
+not luck on one coin-flip direction.
+
+## Entry prices
+
+Paper entries (the price the $1000 PAPER pnl is computed against): avg **0.8089**,
+min 0.7728, max 0.8529, with **6 of 10 in the cheaper lower half** (< 0.805).
+Three entries hit the band floor at 0.7728.
+
+The pnl is mechanically monotone with cheapness (buying the favorite at p returns more the
+lower p is): the three 0.7728 entries returned the biggest wins (+7.24 / +7.41 / +7.63),
+while the two 0.84-0.85 entries returned the smallest (+4.28 / +4.65 / +4.79). So the
++$60 is partly "10 clean wins" AND partly "entries skewed cheap": at 0.8089 avg vs a
+band midpoint of ~0.805 the bag is slightly fat, and the cluster of 0.77 fills is what
+lifts the per-win average to ~+6.0 instead of the ~+4.5 you'd get hugging 0.85.
+
+Live fills (real probes, $1-scale) match: fills at 0.75-0.84, all favorite side. Real
+sizing is tiny so the +$60 is the PAPER signal, not realized cash.
+
+## Spot context
+
+Binance BTCUSDT, UTC 05:00-05:59:
+- hour open 59,830 -> close 60,141 = **+311 (+0.52%)**: a clean, sustained uptrend.
+- 37 up minutes vs 24 down; the only real dip (-204 at 05:05, low 59,392) recovered fast.
+- range 59,392-60,156, span 764 (1.28%); 1-min ret stdev 0.076% (low/moderate vol).
+- The tape trended UP and the favorite tracked it: early in the hour the dip favored NO
+  (05:00/05:15 NO won), then as price ground higher YES became favorite and won 7 straight
+  through the 05:43-05:59 leg (+277 into the close). Trending tape -> favorite holds ->
+  100%. This is the textbook condition where fav_hold prints: directional drift with no
+  whipsaw big enough to flip-and-reverse a favorite into a loss.
+
+## vs normal
+
+BTC baseline (whole DB, 2026-06-27 -> 06-29): **303 wins / 372 trades = 81.5% per-trade**.
+Avg win +6.24, avg loss -24.73 (losers are ~4x the size of winners -- the usual
+favorite-strategy payoff shape, which is exactly why a no-loss hour is so valuable).
+
+P(10 wins in 10) at the true rate:
+- at p=0.815 (measured): 0.128 -> **~1 in 7.8 hours**
+- at p=0.80: 0.107 -> ~1 in 9.3
+- at p=0.85: 0.197 -> ~1 in 5.1
+
+So a perfect 10/10 BTC hour is good but completely plausible -- it should happen roughly
+every 8 fired-hours of BTC. For context this 3-day window already had several other 100%
+BTC hours (06-27 18:00 +82.8 on 11/11, 06-27 19:00 +61.4 on 8/8, 06-27 20:00 +63.9 on
+10/10, 06-28 01:00 +58.7 on 10/10, 06-28 18:00 +50.0 on 11/11). 100% hours are routine;
+the size here (+$60) is mid-pack among them, lifted by the cheap-entry cluster + trend.
+
+## Verdict: VARIANCE (with a mild, known tailwind)
+
+Primarily **VARIANCE**. A 10/10 hour at a true ~81.5% win rate is ~1-in-8 -- not rare,
+and the box logs multiple such hours in 3 days. There is no new edge here.
+
+The one repeatable, already-known structural fact: the win came during a clean +0.52%
+trend with low whipsaw, and the favorite-hold strategy's whole edge is that **trending
+tape keeps the favorite winning**. The hour also drew entries skewed to the cheap end of
+the band (6/10 below 0.805, three at the 0.77 floor), which is what turned a 10/10 into a
++$60 10/10 rather than a +$45 one. Both effects are the strategy doing exactly what it's
+supposed to do in a favorable regime -- not a discovery.
+
+Caveat that keeps this honest: this is a 10-trade sample inside one good-regime hour, and
+the loss tail (-24.7 avg) means a single flip would have erased ~40% of the hour's gain.
+The clean run says "trend was kind," not "we found alpha."
+
+## Action
+
+- **No code change.** File as a confirming example of fav_hold + trend, not a new signal.
+- If anything is worth testing later (low priority): the cheap-entry effect is real and
+  mechanical -- a band-position weighting that sizes up nearer 0.76 and down nearer 0.85
+  would harvest more of these +7 wins, but it also sizes into the same losers, so it only
+  helps if entry-price does NOT predict loss probability. Worth a quick backtest of
+  win% vs entry-price bucket before believing it; do NOT lean on a single hour.
+- Watch the loss tail, not the win streak: at -24.7 avg loss vs +6.2 avg win, BTC needs
+  ~80% just to break even. The lesson from this WIN hour is the same as the loss hours --
+  the edge lives entirely in keeping win% above ~80%, which here required a trending tape.
