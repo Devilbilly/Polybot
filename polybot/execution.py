@@ -84,7 +84,7 @@ class ClobExecutor(Executor):
                  chain_id: int = 137, max_shares: float = 5.0, dry_run: bool = True,
                  price_buffer_ticks: int = 3, desync_tol: float = 0.05,
                  min_usd: float = 1.0, min_price: float = 0.5, signature_type: int = None,
-                 max_slip_below: float = 0.02):
+                 max_slip_below: float = 0.02, max_fill_price: float = 0.90):
         from eth_account import Account
         from py_clob_client_v2 import ClobClient
         key = open(key_path).read().strip()
@@ -103,7 +103,8 @@ class ClobExecutor(Executor):
         self.min_usd = float(min_usd)
         self.min_price = float(min_price)
         self.max_slip_below = float(max_slip_below)
-        self._tick_cache = {}
+        self.max_fill_price = float(max_fill_price)   # HARD CEILING: never let the spread-cross buffer
+        self._tick_cache = {}                         # push a fill into the -EV >sell_p zone
 
     def _tick(self, tok):
         if tok not in self._tick_cache:
@@ -149,11 +150,21 @@ class ClobExecutor(Executor):
             if price_hint and float(px) < float(price_hint) - self.max_slip_below:
                 return Fill("", side, 0.0, 0.0,
                             status=f"REJECTED:slipped(hint{float(price_hint):.2f}/ask{float(px):.2f})")
+            # CEILING GATE: refuse to BUY a favorite whose LIVE marketable ask is already above the
+            # ceiling (max_fill_price = sell_p). The >sell_p zone is -EV in REAL money (Phase 7/8:
+            # [0.90,0.93) real margin -0.0485 -- slippage/adverse-selection on thin >0.90 books). The
+            # favorite can drift up between the strategy's decision and execution; this stops us paying
+            # for it. (Without this, the +3-tick spread-cross buffer let fills reach 0.91-0.92.)
+            if self.max_fill_price and float(px) > self.max_fill_price + 1e-9:
+                return Fill("", side, 0.0, 0.0,
+                            status=f"REJECTED:ceiling(ask{float(px):.2f}>{self.max_fill_price:.2f})")
             # Snap the limit to >= 1-cent granularity: integer-shares x a 2-decimal price keeps the
             # maker amount on whole cents (Polymarket caps maker at 2 decimals). A 1c price is valid on
             # every market tick (0.1/0.01/0.001/0.0001), so this also fixes "invalid amounts" on fine-tick markets.
             tick = max(self._tick(tok), 0.01)
             raw = min(1.0 - tick, float(px) + self.price_buffer_ticks * tick)   # marketable: cross the spread
+            if self.max_fill_price:                          # cap the limit too: the buffer must NOT push
+                raw = min(raw, self.max_fill_price)          # the fill above the ceiling on a deeper book
             limit = round(round(raw / tick) * tick, 2)
             order_shares = self._size_for(limit)             # integer shares ~ $1
             args = OrderArgs(token_id=tok, price=limit, size=order_shares, side=BUY)
@@ -198,5 +209,6 @@ def make_executor(real_mode: str = "paper", key_path=None, funder_path=None,
         kp = key_path or os.path.expanduser("~/.config/polybot-clob.key")
         fp = funder_path or os.path.expanduser("~/.config/polybot-clob.funder")
         return ClobExecutor(kp, fp, max_shares=max_shares, dry_run=(real_mode == "dryrun"),
-                            max_slip_below=float(kw.get("max_slip_below", 0.02)))
+                            max_slip_below=float(kw.get("max_slip_below", 0.02)),
+                            max_fill_price=float(kw.get("max_fill_price", 0.90)))
     raise ValueError(f"unknown real_mode {real_mode!r} (paper|shadow|dryrun|live)")

@@ -462,9 +462,13 @@ async def run_multi(config_path: str = "polybot/portfolio.json", db_path: str = 
         log.info("[MULTI] ledger disabled (%s); trading unaffected", e)
     try:
         from .execution import make_executor
-        executor = make_executor(real_mode)
-        log.info("[MULTI] real_mode=%s executor=%s (paper=no real orders; shadow=mock 1-share probes)",
-                 real_mode, type(executor).__name__ if executor else None)
+        try:                                              # cap real fills at sell_p (no buying the -EV >sell_p zone)
+            _sellp = float(cfg["strategies"][0]["params"].get("sell_p", 0.90))
+        except Exception:
+            _sellp = 0.90
+        executor = make_executor(real_mode, max_fill_price=_sellp)
+        log.info("[MULTI] real_mode=%s executor=%s max_fill_price=%.2f (paper=no real orders)",
+                 real_mode, type(executor).__name__ if executor else None, _sellp)
     except Exception as e:
         executor = None
         log.info("[MULTI] executor disabled (%s); paper trading unaffected", e)
