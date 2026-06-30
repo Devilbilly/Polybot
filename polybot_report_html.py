@@ -88,6 +88,39 @@ def realmoney():
     return cash, posval, per, hr, phour, cphour
 
 
+def exec_stats():
+    """Real-execution health: avg buy price (1h/6h), fills above 0.90 (should be 0 after the ceiling),
+    and reject counts by type (from ledger.note)."""
+    import re as _re
+    from collections import Counter as _C
+    out = dict(avg1=0.0, n1=0, avg6=0.0, n6=0, mx6=0.0, over90=0, rej={})
+    try:
+        lc = sqlite3.connect("file:%s?mode=ro" % LED, uri=True)
+        now = lc.execute("SELECT MAX(ts) FROM ledger").fetchone()[0] or 0
+        rows = lc.execute("SELECT fill_price, fill_shares, note, ts FROM ledger "
+                          "WHERE event='FILL' AND mode='LIVE'").fetchall()
+        lc.close()
+        f1, f6, rej = [], [], _C()
+        for fp, sh, note, ts in rows:
+            if ts is None:
+                continue
+            if (sh or 0) > 0 and fp:
+                if ts >= now - 3600:
+                    f1.append(float(fp))
+                if ts >= now - 6 * 3600:
+                    f6.append(float(fp))
+            elif ts >= now - 6 * 3600:
+                m = _re.search(r"REJECTED:(\w+)", note or "")
+                rej[m.group(1) if m else ("ERR" if "ERR" in (note or "") else "other")] += 1
+        out.update(n1=len(f1), avg1=(sum(f1) / len(f1) if f1 else 0.0),
+                   n6=len(f6), avg6=(sum(f6) / len(f6) if f6 else 0.0),
+                   mx6=(max(f6) if f6 else 0.0),
+                   over90=sum(1 for p in f6 if p > 0.90), rej=dict(rej))
+    except Exception:
+        pass
+    return out
+
+
 def _sleeves():
     try:
         import json
@@ -247,6 +280,13 @@ def main():
              f"<td style='{td}'>{'$%.2f' % cash if cash is not None else '?'} / "
              f"{'$%.2f' % posval if posval is not None else '?'}</td></tr>")
     P.append(f"<tr><td style='{tdl}'>live fills (last 1h)</td><td style='{td}'>{rhr[0]} (${rhr[1]:.2f})</td></tr>")
+    es = exec_stats()
+    rejstr = " ".join(f"{k}:{v}" for k, v in sorted(es["rej"].items())) or "—"
+    P.append(f"<tr><td style='{tdl}'>avg buy px (1h / 6h)</td>"
+             f"<td style='{td}'>{es['avg1']:.3f} / {es['avg6']:.3f}</td></tr>")
+    P.append(f"<tr><td style='{tdl}'>fills &gt;0.90 (6h, want 0)</td>"
+             f"<td style='{td}color:{'#c0392b' if es['over90'] else '#067d06'};'><b>{es['over90']}</b></td></tr>")
+    P.append(f"<tr><td style='{tdl}'>rejects (6h)</td><td style='{td}'>{html.escape(rejstr)}</td></tr>")
     P.append("</table>")
 
     P.append("<h3 style='margin:14px 0 4px;'>Real money - per coin "
