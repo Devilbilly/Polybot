@@ -667,6 +667,10 @@ if __name__ == "__main__":  # pragma: no cover
         kw = {}
         if "--assets" in sys.argv:               # TRADE a subset only (recorder still records all 4)
             kw["assets"] = tuple(a for a in sys.argv[sys.argv.index("--assets") + 1].split(",") if a)
+        if "--db" in sys.argv:                   # ISOLATED db (e.g. xrp PAPER eval, separate from the live DB)
+            kw["db_path"] = sys.argv[sys.argv.index("--db") + 1]
+        if "--ledger" in sys.argv:               # ISOLATED ledger (keeps the live decision metrics clean)
+            kw["ledger_path"] = sys.argv[sys.argv.index("--ledger") + 1]
         asyncio.run(run_multi(real_mode=mode, **kw))   # PLAYER: trade many markets in parallel (favorites-only)
     else:
         asyncio.run(run())                # single BTC market, favorites-only (default, proven)

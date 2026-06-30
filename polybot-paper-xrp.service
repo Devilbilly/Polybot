@@ -1,0 +1,17 @@
+[Unit]
+Description=Polybot xrp PAPER trader (evaluate xrp under live 0.78+chop config, NO real money, isolated DB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=palacedeforsaken
+WorkingDirectory=/home/palacedeforsaken/Polybot
+ExecStart=/usr/bin/python3 -u -m polybot.live --multi --assets xrp --db polymarket_xrp.db --ledger ledger_xrp.db
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/palacedeforsaken/xrp_paper.log
+StandardError=append:/home/palacedeforsaken/xrp_paper.log
+
+[Install]
+WantedBy=multi-user.target
